@@ -13,6 +13,7 @@ import numpy as np
 
 from src.config import SLIPPAGE_BPS
 from src.core.duckdb_store import get_parquet_path
+from src.core.cache_manifest import get_manifest
 from src.alpha_lab.sandbox_executor import execute_strategy
 from src.alpha_lab.alpha_lab_store import (
     save_equity_curve, save_trade_ledger, update_experiment_status, update_experiment_code,
@@ -24,8 +25,17 @@ def _load_aligned_data() -> pl.DataFrame:
 
     Returns a DataFrame with entity_id, date, adj_close, volume, and
     all feature columns — read-only from existing parquet files.
+    
+    Uses incremental caching to avoid re-reading unchanged Parquet files.
     """
     from src.ecs.alignment_system import align_fundamentals
+
+    manifest = get_manifest()
+    
+    # Check if we can use cached aligned data
+    cached_result = manifest.load_cached("_aligned_data_full")
+    if cached_result is not None:
+        return cached_result
 
     # Keep data prep identical to Strategy Studio tournament system.
     df = align_fundamentals()
@@ -58,6 +68,9 @@ def _load_aligned_data() -> pl.DataFrame:
         if "ticker" in emap.columns and "entity_id" in emap.columns:
             df = df.join(emap.select(["entity_id", "ticker"]), on="entity_id", how="left")
 
+    # Cache the full aligned result
+    manifest.save_cached("_aligned_data_full", df)
+    
     return df
 
 
