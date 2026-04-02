@@ -1,0 +1,101 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL (Transactional Database) ─────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-quantprime}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.local}
+      POSTGRES_DB: ${POSTGRES_DB:-quantprime}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quantprime"]
+      interval: 5s
+      retries: 5
+
+  # ── Redis (Celery Broker + Pub/Sub) ────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 5
+
+  # ── FastAPI Backend ────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file: .env.local
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-quantprime}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-quantprime}
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./data/components:/app/data/components
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Next.js Frontend ──────────────────────────────────────
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:8000
+    depends_on:
+      - api
+
+  # ── Celery Worker ─────────────────────────────────────────
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: celery -A src.core.celery_app worker --loglevel=info --concurrency=4
+    restart: unless-stopped
+    env_file: .env.local
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-quantprime}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-quantprime}
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./data/components:/app/data/components
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Celery Beat (Scheduler) ───────────────────────────────
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: celery -A src.core.celery_app beat --loglevel=info
+    restart: unless-stopped
+    env_file: .env.local
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-quantprime}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-quantprime}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - celery_worker
+
+volumes:
+  pg_data:

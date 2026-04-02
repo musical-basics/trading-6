@@ -1,0 +1,35 @@
+# ── Level 4 Backend ──────────────────────────────────────────
+polars
+duckdb
+fastapi
+uvicorn[standard]
+pyarrow
+orjson
+
+# ── Core Math ────────────────────────────────────────────────
+numpy
+scipy
+xgboost
+scikit-learn
+
+# ── Data Sources ─────────────────────────────────────────────
+yfinance
+alpaca-trade-api
+python-dotenv
+
+# ── Level 5 Infrastructure ───────────────────────────────────
+sqlalchemy>=2.0
+alembic>=1.13
+supabase>=2.0
+celery[redis]>=5.3
+redis>=5.0
+websockets>=12.0
+anthropic>=0.39
+
+# ── Legacy (kept for backup Streamlit UI) ────────────────────
+pandas
+streamlit
+plotly
+statsmodels
+
+alpaca-py
