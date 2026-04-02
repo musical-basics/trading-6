@@ -114,6 +114,37 @@ const STATUS_BADGES: Record<string, { bg: string; text: string; label: string }>
   error: { bg: "bg-orange-500/20", text: "text-orange-400", label: "Error" },
 }
 
+const SWARM_TIER_ABBR_TO_KEY: Record<string, TierKey> = {
+  hai: "haiku",
+  son: "sonnet",
+  opu: "opus",
+}
+
+function isSwarmExperiment(exp: AlphaExperiment): boolean {
+  return (exp.model_tier || "").startsWith("swarm/")
+}
+
+function parseSwarmModelConfig(modelTier?: string): { researcher?: TierKey; risk_manager?: TierKey; developer?: TierKey } {
+  if (!modelTier?.startsWith("swarm/")) return {}
+  const raw = modelTier.replace("swarm/", "")
+  const parts = raw.split("-")
+
+  if (parts.length === 3) {
+    return {
+      researcher: SWARM_TIER_ABBR_TO_KEY[parts[0]] || undefined,
+      risk_manager: SWARM_TIER_ABBR_TO_KEY[parts[1]] || undefined,
+      developer: SWARM_TIER_ABBR_TO_KEY[parts[2]] || undefined,
+    }
+  }
+
+  const single = raw as TierKey
+  if (single in TIER_CONFIG) {
+    return { researcher: single, risk_manager: single, developer: single }
+  }
+
+  return {}
+}
+
 export default function AlphaLab() {
   const [activeTab, setActiveTab] = useState<Tab>("generate")
   const [experiments, setExperiments] = useState<AlphaExperiment[]>([])
@@ -727,6 +758,10 @@ export default function AlphaLab() {
               {experiments.map((exp) => {
                 const badge = STATUS_BADGES[exp.status] || STATUS_BADGES.error
                 const tierInfo = TIER_CONFIG[exp.model_tier as TierKey]
+                const swarmConfig = parseSwarmModelConfig(exp.model_tier)
+                const swarmLabel = swarmConfig.researcher && swarmConfig.risk_manager && swarmConfig.developer
+                  ? `R:${TIER_CONFIG[swarmConfig.researcher].label} · RM:${TIER_CONFIG[swarmConfig.risk_manager].label} · Dev:${TIER_CONFIG[swarmConfig.developer].label}`
+                  : "R/ RM/ Dev config unavailable"
                 const isSelected = selectedExp?.experiment_id === exp.experiment_id
 
                 const isCombineSelected = selectedForCombine.has(exp.experiment_id)
@@ -774,12 +809,22 @@ export default function AlphaLab() {
                     </div>
 
                     <div className="flex items-center gap-3 mt-2 text-xs text-zinc-500">
-                      <span>{tierInfo?.icon} {tierInfo?.label}</span>
+                      {isSwarmExperiment(exp) ? (
+                        <span className="text-cyan-300">🤖 Swarm</span>
+                      ) : (
+                        <span>{tierInfo?.icon} {tierInfo?.label}</span>
+                      )}
                       <span>·</span>
                       <span className="text-emerald-400">${exp.cost_usd?.toFixed(4)}</span>
                       <span>·</span>
                       <span>{exp.experiment_id}</span>
                     </div>
+
+                    {isSwarmExperiment(exp) && (
+                      <div className="mt-1 text-[11px] text-cyan-200/80 truncate" title={swarmLabel}>
+                        {swarmLabel}
+                      </div>
+                    )}
 
                     {exp.metrics && !exp.metrics.error && (
                       <div className="flex gap-3 mt-2 text-xs">
@@ -892,13 +937,25 @@ export default function AlphaLab() {
 
                 {/* Cost Card */}
                 <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-4">
+                  {(() => {
+                    const swarmConfig = parseSwarmModelConfig(selectedExp.model_tier)
+                    const hasSwarmConfig = Boolean(swarmConfig.researcher && swarmConfig.risk_manager && swarmConfig.developer)
+                    return (
                   <div className="grid grid-cols-4 gap-4 text-sm">
                     <div>
                       <div className="text-xs text-zinc-500">Model</div>
                       <div className="text-white font-semibold">
-                        {TIER_CONFIG[selectedExp.model_tier as TierKey]?.icon}{" "}
-                        {TIER_CONFIG[selectedExp.model_tier as TierKey]?.label}
+                        {isSwarmExperiment(selectedExp)
+                          ? "🤖 Swarm"
+                          : `${TIER_CONFIG[selectedExp.model_tier as TierKey]?.icon ?? ""} ${TIER_CONFIG[selectedExp.model_tier as TierKey]?.label ?? selectedExp.model_tier}`}
                       </div>
+                      {isSwarmExperiment(selectedExp) && (
+                        <div className="text-[11px] text-cyan-200 mt-1 leading-4">
+                          {hasSwarmConfig
+                            ? `Researcher: ${TIER_CONFIG[swarmConfig.researcher!].label} | Risk Manager: ${TIER_CONFIG[swarmConfig.risk_manager!].label} | Developer: ${TIER_CONFIG[swarmConfig.developer!].label}`
+                            : "Swarm config unavailable"}
+                        </div>
+                      )}
                     </div>
                     <div>
                       <div className="text-xs text-zinc-500">Input Tokens</div>
@@ -913,6 +970,8 @@ export default function AlphaLab() {
                       <div className="text-emerald-400 font-semibold">${selectedExp.cost_usd?.toFixed(4)}</div>
                     </div>
                   </div>
+                    )
+                  })()}
                 </div>
 
                 {/* Metrics Card */}
