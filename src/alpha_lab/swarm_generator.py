@@ -173,6 +173,7 @@ CRITICAL POLARS API RULES (you MUST follow these exactly):
 - Avoid `.select()` at the end — return the full df with the weight column added via `.with_columns()`
 - NEVER divide by a value that could be zero or near-zero. Always clip the divisor: `/ pl.col("x").clip(0.01, None)` instead of `/ (pl.col("x") + 1e-6)`
 - Use `.fill_null(0.0)` BEFORE arithmetic operations on columns that may have nulls
+- Fundamental data staleness guardrail: If your strategy uses fundamental fields, you MUST enforce TWO checks combined: (1) staleness — filing_date must not be null and must be < 540 days old (18 months); (2) SEC publication lag — trade date must be >= filing_date + 45 days. You MUST force the signal to 0.0 and also apply this same stale mask as a hard circuit-breaker to the FINAL `raw_weight_*` column using `pl.when(...).then(0.0).otherwise(...)`.
 - T-1 LOOKAHEAD GUARDRAIL: All signal generation, trailing stops, trailing maximums, and price/volume filters MUST evaluate on strictly shifted T-1 data to make decisions for T0. Do NOT evaluate today's `adj_close`, `volume`, or calculated metrics mapped to today's row to trigger a trade today. Force a `.shift(1).over("entity_id")` on all price/volume references used in signal thresholds, stop-loss calculations, and conditionals.
 
 RESPOND in this exact format:
@@ -325,6 +326,7 @@ CRITICAL POLARS API RULES (you MUST follow these exactly):
 - Avoid `.select()` at the end — return the full df with the weight column added via `.with_columns()`
 - NEVER divide by a value that could be zero or near-zero. Always clip the divisor: `/ pl.col("x").clip(0.01, None)` instead of `/ (pl.col("x") + 1e-6)`
 - Use `.fill_null(0.0)` BEFORE arithmetic operations on columns that may have nulls
+- Fundamental data staleness guardrail: If your strategy uses fundamental fields, you MUST enforce TWO checks combined: (1) staleness — filing_date must not be null and must be < 540 days old (18 months); (2) SEC publication lag — trade date must be >= filing_date + 45 days. You MUST force the signal to 0.0 and also apply this same stale mask as a hard circuit-breaker to the FINAL `raw_weight_*` column using `pl.when(...).then(0.0).otherwise(...)`.
 - T-1 LOOKAHEAD GUARDRAIL: All signal generation, trailing stops, trailing maximums, and price/volume filters MUST evaluate on strictly shifted T-1 data to make decisions for T0. Do NOT evaluate today's `adj_close`, `volume`, or calculated metrics mapped to today's row to trigger a trade today. Force a `.shift(1).over("entity_id")` on all price/volume references used in signal thresholds, stop-loss calculations, and conditionals.
 
 RESPOND in this exact format:
@@ -685,6 +687,8 @@ def _enforce_ast_guardrails(code: str) -> None:
       G3. .pct_change(-N) with negative N — future return calculation
       G4. Fundamental columns used without filing_date staleness guard
           (filing_date must appear in code when any fundamental col is referenced)
+            G5. Fundamental strategies must apply filing_date circuit-breaker directly
+                    on final raw_weight_* expression (not only intermediate sub-signals)
     """
     try:
         tree = ast.parse(code)
@@ -709,6 +713,7 @@ def _enforce_ast_guardrails(code: str) -> None:
         def __init__(self):
             self.referenced_fundamentals: set[str] = set()
             self.has_staleness_guard: bool = False  # filing_date check present
+            self.final_weight_has_filing_circuit_breaker: bool = False
 
         def visit_Call(self, node):
             # ── G1: fill_null(strategy='backward') ─────────────────────────
@@ -765,6 +770,32 @@ def _enforce_ast_guardrails(code: str) -> None:
                                 "computes future returns (lookahead bias). Use positive n only."
                             )
 
+            # ── G5: final raw_weight_* must carry filing_date circuit-breaker ──
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "alias":
+                if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                    alias_name = node.args[0].value
+                    if alias_name.startswith("raw_weight_"):
+                        expr = node.func.value
+                        has_filing_ref = False
+                        has_45_or_540 = False
+                        has_zero_then = False
+                        has_when_chain = False
+
+                        for sub in ast.walk(expr):
+                            if isinstance(sub, ast.Constant):
+                                if isinstance(sub.value, str) and sub.value == "filing_date":
+                                    has_filing_ref = True
+                                if isinstance(sub.value, (int, float)) and sub.value in (45, 540):
+                                    has_45_or_540 = True
+                                if isinstance(sub.value, (int, float)) and float(sub.value) == 0.0:
+                                    has_zero_then = True
+                            elif isinstance(sub, ast.Attribute):
+                                if sub.attr in ("when", "then", "otherwise"):
+                                    has_when_chain = True
+
+                        if has_filing_ref and has_45_or_540 and has_zero_then and has_when_chain:
+                            self.final_weight_has_filing_circuit_breaker = True
+
             self.generic_visit(node)
 
         def visit_Constant(self, node):
@@ -785,6 +816,18 @@ def _enforce_ast_guardrails(code: str) -> None:
         raise ValueError(
             f"AST Guardrail Violation [G4]: Strategy references fundamental column(s) "
             f"[{cols}] without a filing_date staleness guard."
+        )
+
+    # ── G5 post-visit: final raw_weight_* must include circuit-breaker ─────
+    if visitor.referenced_fundamentals and not visitor.final_weight_has_filing_circuit_breaker:
+        raise ValueError(
+            "AST Guardrail Violation [G5]: Fundamental strategies must apply the "
+            "filing_date staleness + SEC-lag circuit-breaker directly on the final "
+            "raw_weight_* alias. Wrap final weight with: "
+            "pl.when(pl.col('filing_date').is_null() | "
+            "((pl.col('date') - pl.col('filing_date').cast(pl.Date)).dt.total_days() > 540) | "
+            "((pl.col('date') - pl.col('filing_date').cast(pl.Date)).dt.total_days() < 45))"
+            ".then(0.0).otherwise(<pre_weight>).alias('raw_weight_<id>')"
         )
 
 

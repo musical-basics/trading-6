@@ -20,6 +20,7 @@ import polars as pl
 from src.config import DEFAULT_UNIVERSE, MACRO_TICKERS, PROJECT_ROOT
 from src.core.entity_map import EntityMap
 from src.core.duckdb_store import PARQUET_DIR, get_parquet_path
+from src.ecs.fundamental_hygiene import canonicalize_quarterly_fundamentals
 
 
 def _load_entity_map() -> EntityMap:
@@ -258,7 +259,7 @@ def ingest_fundamentals(
     else:
         combined = new_df
 
-    combined = combined.sort(["entity_id", "filing_date"])
+    combined = canonicalize_quarterly_fundamentals(combined)
     combined.write_parquet(parquet_path)
     print(f"  ✓ {len(combined):,} total fundamental rows")
 

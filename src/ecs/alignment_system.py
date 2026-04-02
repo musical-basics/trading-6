@@ -24,6 +24,7 @@ from src.config import (
     ZSCORE_BUY_THRESHOLD, MAX_SINGLE_WEIGHT,
 )
 from src.core.duckdb_store import get_parquet_path, PARQUET_DIR
+from src.ecs.fundamental_hygiene import canonicalize_quarterly_fundamentals
 
 
 def align_fundamentals() -> pl.DataFrame:
@@ -38,6 +39,7 @@ def align_fundamentals() -> pl.DataFrame:
 
     market = pl.read_parquet(get_parquet_path("market_data"))
     fundamental = pl.read_parquet(get_parquet_path("fundamental"))
+    fundamental = canonicalize_quarterly_fundamentals(fundamental)
 
     # join_asof requires both to be sorted on the join key
     market = market.sort(["entity_id", "date"])

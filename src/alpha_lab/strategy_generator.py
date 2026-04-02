@@ -478,6 +478,8 @@ def _enforce_ast_guardrails(code: str) -> None:
       G3. .pct_change(-N) with negative N — future return calculation
       G4. Fundamental columns used without filing_date staleness guard
           (filing_date must appear in code when any fundamental col is referenced)
+            G5. Fundamental strategies must apply filing_date circuit-breaker directly
+                    on final raw_weight_* expression (not only intermediate sub-signals)
     """
     try:
         tree = ast.parse(code)
@@ -500,6 +502,7 @@ def _enforce_ast_guardrails(code: str) -> None:
         def __init__(self):
             self.referenced_fundamentals: set[str] = set()
             self.has_staleness_guard: bool = False  # filing_date > 540 days check present
+            self.final_weight_has_filing_circuit_breaker: bool = False
 
         def visit_Call(self, node):
             # ── G1: fill_null(strategy='backward') ─────────────────────────
@@ -557,6 +560,32 @@ def _enforce_ast_guardrails(code: str) -> None:
                                 "computes future returns (lookahead bias). Use positive n only."
                             )
 
+            # ── G5: final raw_weight_* must carry filing_date circuit-breaker ──
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "alias":
+                if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                    alias_name = node.args[0].value
+                    if alias_name.startswith("raw_weight_"):
+                        expr = node.func.value
+                        has_filing_ref = False
+                        has_45_or_540 = False
+                        has_zero_then = False
+                        has_when_chain = False
+
+                        for sub in ast.walk(expr):
+                            if isinstance(sub, ast.Constant):
+                                if isinstance(sub.value, str) and sub.value == "filing_date":
+                                    has_filing_ref = True
+                                if isinstance(sub.value, (int, float)) and sub.value in (45, 540):
+                                    has_45_or_540 = True
+                                if isinstance(sub.value, (int, float)) and float(sub.value) == 0.0:
+                                    has_zero_then = True
+                            elif isinstance(sub, ast.Attribute):
+                                if sub.attr in ("when", "then", "otherwise"):
+                                    has_when_chain = True
+
+                        if has_filing_ref and has_45_or_540 and has_zero_then and has_when_chain:
+                            self.final_weight_has_filing_circuit_breaker = True
+
             self.generic_visit(node)
 
         def visit_Constant(self, node):
@@ -582,4 +611,16 @@ def _enforce_ast_guardrails(code: str) -> None:
             "pl.when(pl.col('filing_date').is_null() | "
             "((pl.col('date') - pl.col('filing_date').cast(pl.Date)).dt.total_days() > 540))"
             ".then(0.0) to prevent earnings leakage from stale filings."
+        )
+
+    # ── G5 post-visit: final raw_weight_* must include circuit-breaker ─────
+    if visitor.referenced_fundamentals and not visitor.final_weight_has_filing_circuit_breaker:
+        raise ValueError(
+            "AST Guardrail Violation [G5]: Fundamental strategies must apply the "
+            "filing_date staleness + SEC-lag circuit-breaker directly on the final "
+            "raw_weight_* alias. Wrap final weight with: "
+            "pl.when(pl.col('filing_date').is_null() | "
+            "((pl.col('date') - pl.col('filing_date').cast(pl.Date)).dt.total_days() > 540) | "
+            "((pl.col('date') - pl.col('filing_date').cast(pl.Date)).dt.total_days() < 45))"
+            ".then(0.0).otherwise(<pre_weight>).alias('raw_weight_<id>')"
         )

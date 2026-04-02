@@ -22,6 +22,7 @@ from src.alpha_lab.alpha_lab_store import (
     get_experiment,
     update_audit_result,
 )
+from src.ecs.fundamental_hygiene import canonicalize_quarterly_fundamentals
 
 
 # ── Live Models ──────────────────────────────────────────────────────────────
@@ -161,6 +162,7 @@ def _compile_evidence(sampled_trades: pl.DataFrame) -> list[dict]:
 
     try:
         fundamental = pl.read_parquet(fundamental_path)
+        fundamental = canonicalize_quarterly_fundamentals(fundamental)
     except Exception:
         fundamental = None
 

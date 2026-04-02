@@ -201,9 +201,13 @@ export function StrategyStudio() {
     return Object.values(tournamentData.strategies).map((s) => ({
       name: s.name,
       totalReturn: s.metrics.total_return * 100,
-      sharpe: s.metrics.sharpe,
-      maxDrawdown: s.metrics.max_drawdown * 100,
       cagr: s.metrics.cagr * 100,
+      sharpe: s.metrics.sharpe,
+      sortino: s.metrics.sortino,
+      maxDrawdown: s.metrics.max_drawdown * 100,
+      volatility: s.metrics.volatility * 100,
+      winRate: s.metrics.win_rate * 100,
+      profitFactor: s.metrics.profit_factor,
     }))
   }, [tournamentData])
 
@@ -436,8 +440,11 @@ export function StrategyStudio() {
         <Card className="border-border/50 bg-card/50">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-foreground">
-              Strategy Metrics
+              Strategy Metrics (Comprehensive)
             </CardTitle>
+            <CardDescription className="text-xs text-muted-foreground">
+              Scroll horizontally for all metrics
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {metricsRows.length === 0 ? (
@@ -445,75 +452,107 @@ export function StrategyStudio() {
                 Run a backtest to see strategy metrics
               </p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-border/50 hover:bg-transparent">
-                    <TableHead className="text-muted-foreground text-xs font-medium">
-                      Strategy
-                    </TableHead>
-                    <TableHead className="text-muted-foreground text-xs font-medium text-right">
-                      Total Return
-                    </TableHead>
-                    <TableHead className="text-muted-foreground text-xs font-medium text-right">
-                      Sharpe
-                    </TableHead>
-                    <TableHead className="text-muted-foreground text-xs font-medium text-right">
-                      Max DD
-                    </TableHead>
-                    <TableHead className="text-muted-foreground text-xs font-medium text-right">
-                      CAGR
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {metricsRows.map((metric) => (
-                    <TableRow
-                      key={metric.name}
-                      className="border-border/50 hover:bg-accent/30"
-                    >
-                      <TableCell className="font-medium text-sm text-foreground">
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="w-2 h-2 rounded-full"
-                            style={{
-                              backgroundColor: colorMap[metric.name] ?? "#888",
-                            }}
-                          />
-                          {metric.name}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        <span
-                          className={
-                            metric.totalReturn >= 0
-                              ? "text-green-400"
-                              : "text-red-400"
-                          }
-                        >
-                          {metric.totalReturn >= 0 ? (
-                            <TrendingUp className="w-3 h-3 inline mr-1" />
-                          ) : (
-                            <TrendingDown className="w-3 h-3 inline mr-1" />
-                          )}
-                          {metric.totalReturn.toFixed(1)}%
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm text-foreground">
-                        {metric.sharpe.toFixed(2)}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        <span className="text-red-400">
-                          <TrendingDown className="w-3 h-3 inline mr-1" />
-                          {metric.maxDrawdown.toFixed(1)}%
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm text-foreground">
-                        {metric.cagr.toFixed(1)}%
-                      </TableCell>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-border/50 hover:bg-transparent">
+                      <TableHead className="text-muted-foreground text-xs font-medium">
+                        Strategy
+                      </TableHead>
+                      <TableHead className="text-muted-foreground text-xs font-medium text-right">
+                        Return
+                      </TableHead>
+                      <TableHead className="text-muted-foreground text-xs font-medium text-right">
+                        CAGR
+                      </TableHead>
+                      <TableHead className="text-muted-foreground text-xs font-medium text-right">
+                        Vol
+                      </TableHead>
+                      <TableHead className="text-muted-foreground text-xs font-medium text-right">
+                        Sharpe
+                      </TableHead>
+                      <TableHead className="text-muted-foreground text-xs font-medium text-right">
+                        Sortino
+                      </TableHead>
+                      <TableHead className="text-muted-foreground text-xs font-medium text-right">
+                        Calmar
+                      </TableHead>
+                      <TableHead className="text-muted-foreground text-xs font-medium text-right">
+                        MaxDD
+                      </TableHead>
+                      <TableHead className="text-muted-foreground text-xs font-medium text-right">
+                        WinRate
+                      </TableHead>
+                      <TableHead className="text-muted-foreground text-xs font-medium text-right">
+                        ProfitFactor
+                      </TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {metricsRows.map((metric) => (
+                      <TableRow
+                        key={metric.name}
+                        className="border-border/50 hover:bg-accent/30"
+                      >
+                        <TableCell className="font-medium text-sm text-foreground whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="w-2 h-2 rounded-full"
+                              style={{
+                                backgroundColor: colorMap[metric.name] ?? "#888",
+                              }}
+                            />
+                            {metric.name}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs whitespace-nowrap">
+                          <span
+                            className={
+                              metric.totalReturn >= 0
+                                ? "text-green-400"
+                                : "text-red-400"
+                            }
+                          >
+                            {metric.totalReturn >= 0 ? (
+                              <TrendingUp className="w-3 h-3 inline mr-1" />
+                            ) : (
+                              <TrendingDown className="w-3 h-3 inline mr-1" />
+                            )}
+                            {metric.totalReturn.toFixed(1)}%
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs text-foreground whitespace-nowrap">
+                          {metric.cagr.toFixed(1)}%
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs text-foreground whitespace-nowrap">
+                          {metric.volatility.toFixed(1)}%
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs text-foreground whitespace-nowrap">
+                          {metric.sharpe.toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs text-foreground whitespace-nowrap">
+                          {metric.sortino.toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs text-foreground whitespace-nowrap">
+                          {metric.calmar.toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs whitespace-nowrap">
+                          <span className="text-red-400">
+                            <TrendingDown className="w-3 h-3 inline mr-1" />
+                            {metric.maxDrawdown.toFixed(1)}%
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs text-foreground whitespace-nowrap">
+                          {metric.winRate.toFixed(1)}%
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs text-foreground whitespace-nowrap">
+                          {metric.profitFactor.toFixed(2)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </CardContent>
         </Card>

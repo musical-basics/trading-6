@@ -19,11 +19,54 @@ export interface EquityCurvePoint {
 }
 
 export interface StrategyMetrics {
-  sharpe: number
-  max_drawdown: number
-  cagr: number
+  // Basic Returns
   total_return: number
+  cagr: number
   trading_days: number
+
+  // Volatility Metrics
+  volatility: number
+  downside_volatility: number
+
+  // Risk-Adjusted Returns
+  sharpe: number
+  sortino: number
+  calmar: number
+  return_risk_ratio: number
+
+  // Drawdown Analytics
+  max_drawdown: number
+  avg_drawdown: number
+  max_drawdown_duration: number
+  avg_drawdown_duration: number
+  recovery_factor: number
+
+  // Consistency Metrics
+  win_rate: number
+  positive_days: number
+  negative_days: number
+  best_day: number
+  worst_day: number
+  max_consecutive_wins: number
+  max_consecutive_losses: number
+
+  // Profit Metrics
+  profit_factor: number
+  avg_gain: number
+  avg_loss: number
+  expectancy: number
+
+  // Monthly Analytics
+  positive_months: number
+  negative_months: number
+  best_month: number
+  worst_month: number
+
+  // Distribution Metrics
+  skewness: number
+  kurtosis: number
+  var_95: number
+  cvar_95: number
 }
 
 export interface StrategyResult {
