@@ -17,3 +17,5 @@ data/components/
 docs/level_5/
 repomix*
 !repomix.config.json
+api.log
+*.tsbuildinfo
