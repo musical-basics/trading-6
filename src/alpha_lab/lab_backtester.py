@@ -7,11 +7,11 @@ isolated alpha_lab directory.
 """
 
 import os
-from typing import Optional
 
 import polars as pl
 import numpy as np
 
+from src.config import SLIPPAGE_BPS
 from src.core.duckdb_store import get_parquet_path
 from src.alpha_lab.sandbox_executor import execute_strategy
 from src.alpha_lab.alpha_lab_store import (
@@ -25,100 +25,66 @@ def _load_aligned_data() -> pl.DataFrame:
     Returns a DataFrame with entity_id, date, adj_close, volume, and
     all feature columns — read-only from existing parquet files.
     """
-    market_path = get_parquet_path("market_data")
+    from src.ecs.alignment_system import align_fundamentals
+
+    # Keep data prep identical to Strategy Studio tournament system.
+    df = align_fundamentals()
+
     feature_path = get_parquet_path("feature")
-
-    if not os.path.exists(market_path):
-        raise FileNotFoundError("market_data.parquet not found — run the pipeline first")
-
-    market = pl.read_parquet(market_path).select([
-        "entity_id", "date", "adj_close", "volume"
-    ]).sort(["entity_id", "date"])
-
-    # Join entity_map to add ticker names (enables ticker-specific strategies)
-    entity_map_path = os.path.join(os.path.dirname(market_path), "entity_map.parquet")
-    if os.path.exists(entity_map_path):
-        emap = pl.read_parquet(entity_map_path)
-        if "ticker" in emap.columns and "entity_id" in emap.columns:
-            market = market.join(
-                emap.select(["entity_id", "ticker"]),
-                on="entity_id",
-                how="left",
-            )
+    macro_path = get_parquet_path("macro")
 
     if os.path.exists(feature_path):
         features = pl.read_parquet(feature_path)
-        # Join features onto market data
-        join_cols = ["entity_id", "date"]
-        market = market.join(features, on=join_cols, how="left")
+        feature_cols = [c for c in features.columns if c not in ("entity_id", "date")]
+        for c in feature_cols:
+            if c in df.columns:
+                df = df.drop(c)
+        df = df.join(features, on=["entity_id", "date"], how="left")
 
-    # Also try to join macro data for VIX/TNX columns
-    macro_path = get_parquet_path("macro")
     if os.path.exists(macro_path):
         macro = pl.read_parquet(macro_path)
-        # Macro has date-level data (not entity-level), so cross-join by date
         macro_cols = [c for c in macro.columns if c != "date"]
-        if macro_cols:
-            macro_select = ["date"] + macro_cols
-            market = market.join(
-                macro.select(macro_select),
-                on="date",
-                how="left",
-            )
+        for c in macro_cols:
+            if c in df.columns:
+                df = df.drop(c)
+        df = df.join(macro, on="date", how="left")
 
-    # Also try fundamental data (uses filing_date instead of date)
-    fund_path = get_parquet_path("fundamental")
-    if os.path.exists(fund_path):
-        fund = pl.read_parquet(fund_path)
-        if "filing_date" in fund.columns and "entity_id" in fund.columns:
-            # Drop date column from fundamental if it somehow exists to prevent conflicts
-            if "date" in fund.columns:
-                fund = fund.drop("date")
-            
-            market = market.sort(["entity_id", "date"])
-            fund = fund.sort(["entity_id", "filing_date"])
-            
-            market = market.join_asof(
-                fund,
-                left_on="date",
-                right_on="filing_date",
-                by="entity_id",
-                strategy="backward",
-            )
+    entity_map_path = os.path.join(os.path.dirname(get_parquet_path("market_data")), "entity_map.parquet")
+    if os.path.exists(entity_map_path):
+        emap = pl.read_parquet(entity_map_path)
+        benchmark_ids = emap.filter(pl.col("ticker").is_in(["SPY", "QQQ"]))["entity_id"].to_list()
+        df = df.filter(~pl.col("entity_id").is_in(benchmark_ids))
 
-    return market
+        if "ticker" in emap.columns and "entity_id" in emap.columns:
+            df = df.join(emap.select(["entity_id", "ticker"]), on="entity_id", how="left")
+
+    return df
 
 
-def _compute_metrics(equity: pl.DataFrame) -> dict:
-    """Compute backtest metrics from equity curve DataFrame.
-
-    Expects columns: date, daily_return, equity
-    """
-    returns = equity["daily_return"].drop_nulls().to_numpy()
-    eq_vals = equity["equity"].to_numpy()
-
-    trading_days = len(returns)
+def _compute_metrics(equity: np.ndarray, daily_returns: np.ndarray) -> dict:
+    """Compute backtest metrics from equity and daily return arrays."""
+    trading_days = len(daily_returns)
 
     # Sharpe
-    if returns.std() > 0:
-        sharpe = float(returns.mean() / returns.std() * np.sqrt(252))
+    if daily_returns.std() > 0:
+        sharpe = float(daily_returns.mean() / daily_returns.std() * np.sqrt(252))
     else:
         sharpe = 0.0
 
     # Max Drawdown
-    running_max = np.maximum.accumulate(eq_vals)
-    drawdown = 1 - eq_vals / running_max
+    running_max = np.maximum.accumulate(equity)
+    drawdown = 1 - equity / running_max
     max_dd = float(drawdown.max())
 
     # CAGR
-    if trading_days > 0 and eq_vals[0] > 0:
-        total_factor = eq_vals[-1] / eq_vals[0]
+    if trading_days > 0 and equity[0] > 0:
+        total_factor = equity[-1] / equity[0]
         cagr = float(total_factor ** (252 / max(trading_days, 1)) - 1)
     else:
         cagr = 0.0
 
     # Total Return
-    total_return = float(eq_vals[-1] / eq_vals[0] - 1) if eq_vals[0] > 0 else 0.0
+    total_return = float(equity[-1] / equity[0] - 1) if equity[0] > 0 else 0.0
 
     return {
         "sharpe": round(sharpe, 3),
@@ -174,43 +140,28 @@ def run_raw_backtest(
 
         weight_col = [c for c in result_df.columns if c.startswith("raw_weight_")][0]
 
-        result_df = (
-            result_df
-            .with_columns([
-                pl.col(weight_col).filter(pl.col(weight_col) > 0).sum().over("date").alias("_long_sum"),
-                pl.col(weight_col).filter(pl.col(weight_col) < 0).abs().sum().over("date").alias("_short_sum"),
-            ])
-            .with_columns(
-                pl.when(pl.col(weight_col) > 0)
-                .then(pl.col(weight_col) / pl.col("_long_sum").clip(1e-8, None))
-                .when(pl.col(weight_col) < 0)
-                .then(-pl.col(weight_col).abs() / pl.col("_short_sum").clip(1e-8, None))
-                .otherwise(0.0)
-                .alias("_norm_weight")
+        if "daily_return" not in result_df.columns:
+            result_df = result_df.sort(["entity_id", "date"]).with_columns(
+                (pl.col("adj_close") / pl.col("adj_close").shift(1).over("entity_id") - 1).alias("daily_return")
             )
-            .drop("_long_sum", "_short_sum")
-        )
 
         portfolio = (
             result_df
-            .sort(["entity_id", "date"])
-            .with_columns(
-                (pl.col("adj_close") / pl.col("adj_close").shift(1).over("entity_id") - 1).alias("_daily_ret"),
-                (pl.col("_norm_weight") - pl.col("_norm_weight").shift(1).over("entity_id").fill_null(0.0)).abs().alias("_weight_turnover")
-            )
-            .with_columns(
-                # Asset return based on previous day's intended weight, minus 5 bps transaction cost on turnover
-                (
-                    (pl.col("_norm_weight").shift(1).over("entity_id").fill_null(0.0) * pl.col("_daily_ret").fill_null(0.0))
-                    - (pl.col("_weight_turnover") * 0.0005)
-                ).alias("_weighted_ret")
-            )
+            .filter(pl.col(weight_col) != 0)
+            .with_columns((pl.col(weight_col) * pl.col("daily_return")).alias("_weighted_return"))
             .group_by("date")
-            .agg(pl.col("_weighted_ret").sum().alias("daily_return"))
+            .agg(pl.col("_weighted_return").sum().alias("daily_return"))
             .sort("date")
-            .with_columns(
-                (starting_capital * (1 + pl.col("daily_return").fill_null(0)).cum_prod()).alias("equity")
-            )
+        )
+
+        if portfolio.is_empty():
+            return {"error": "Strategy generated no active positions", "final_code": current_code}
+
+        portfolio = portfolio.with_columns(
+            (pl.col("daily_return") - SLIPPAGE_BPS).alias("net_return")
+        ).with_columns(
+            (starting_capital * (1 + pl.col("net_return").fill_null(0)).cum_prod()).alias("equity"),
+            pl.col("net_return").alias("daily_return"),
         )
 
         # ── Trade Ledger Extraction ─────────────────────────────────
@@ -221,15 +172,15 @@ def run_raw_backtest(
             .sort(["entity_id", "date"])
             .with_columns(
                 (
-                    pl.col("_norm_weight")
-                    - pl.col("_norm_weight").shift(1).over("entity_id")
+                    pl.col(weight_col)
+                    - pl.col(weight_col).shift(1).over("entity_id")
                 ).alias("weight_delta")
             )
             .filter(pl.col("weight_delta").abs() > 0.001)
         )
 
         # Build trade ledger columns
-        ledger_cols = ["date", "entity_id", "weight_delta", "_norm_weight"]
+        ledger_cols = ["date", "entity_id", "weight_delta", weight_col]
         if "ticker" in result_with_delta.columns:
             ledger_cols.append("ticker")
         if "adj_close" in result_with_delta.columns:
@@ -240,7 +191,7 @@ def run_raw_backtest(
         trade_ledger = (
             result_with_delta
             .select([c for c in ledger_cols if c in result_with_delta.columns])
-            .rename({"_norm_weight": "norm_weight"})
+            .rename({weight_col: "norm_weight"})
             .with_columns(
                 pl.when(pl.col("weight_delta") > 0)
                 .then(pl.lit("BUY"))
@@ -249,7 +200,10 @@ def run_raw_backtest(
             )
         )
 
-        metrics = _compute_metrics(portfolio)
+        metrics = _compute_metrics(
+            portfolio["equity"].to_numpy(),
+            portfolio["daily_return"].fill_null(0).to_numpy(),
+        )
 
         return {
             "metrics": metrics,
