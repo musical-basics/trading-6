@@ -10,6 +10,7 @@ Supports three model tiers with cost tracking:
     - opus:   claude-3-opus-latest    (highest quality)
 """
 
+import ast
 import os
 import re
 from dataclasses import dataclass
