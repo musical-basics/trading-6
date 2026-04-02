@@ -13,8 +13,7 @@ echo ""
 
 # Backend API (prefixed)
 (
-  source .venv/bin/activate
-  python3 -m uvicorn src.api.server:app --reload --port 8000 2>&1 | \
+  ./.venv/bin/python -m uvicorn src.api.server:app --reload --port 8000 2>&1 | \
     tee api.log | sed 's/^/[API] /'
 ) &
 

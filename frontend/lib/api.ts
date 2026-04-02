@@ -393,6 +393,13 @@ export interface IndicatorsResult {
   statistical: StatisticalIndicators | null
 }
 
+export async function fetchIndicatorTickers(): Promise<string[]> {
+  const res = await fetch(`${API_BASE}/api/indicators/tickers`)
+  if (!res.ok) return []
+  const data = await res.json()
+  return data.tickers ?? []
+}
+
 export async function fetchIndicators(ticker: string, rfrSource: string = "irx"): Promise<IndicatorsResult | null> {
   const res = await fetch(`${API_BASE}/api/indicators/${ticker}?rfr_source=${rfrSource}`)
   if (!res.ok) return null
