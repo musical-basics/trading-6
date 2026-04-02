@@ -1,17 +1,17 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { 
+import { useEffect, useState } from "react"
+import {
   fetchIndicatorTickers,
-  fetchIndicators, 
-  IndicatorsResult,
-  TechnicalIndicators,
+  fetchIndicators,
   FundamentalIndicators,
-  StatisticalIndicators
+  IndicatorsResult,
+  StatisticalIndicators,
+  TechnicalIndicators,
 } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Command,
   CommandEmpty,
@@ -21,11 +21,22 @@ import {
   CommandList,
 } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { AlertCircle, BarChart3, Check, DollarSign, Loader2, Plus, Search, TrendingDown, TrendingUp, X } from "lucide-react"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  AlertCircle,
+  BarChart3,
+  Check,
+  DollarSign,
+  Loader2,
+  Plus,
+  Search,
+  TrendingDown,
+  TrendingUp,
+  X,
+} from "lucide-react"
 
 export function IndicatorsAnalysis() {
   const [selectedTickers, setSelectedTickers] = useState(["AAPL"])
@@ -45,6 +56,7 @@ export function IndicatorsAnalysis() {
       .catch(() => {
         if (!cancelled) setAvailableTickers([])
       })
+
     return () => {
       cancelled = true
     }
@@ -54,6 +66,7 @@ export function IndicatorsAnalysis() {
     let cancelled = false
     setLoading(true)
     setError(null)
+
     Promise.all(
       selectedTickers.map(async (ticker) => ({
         ticker,
@@ -62,6 +75,7 @@ export function IndicatorsAnalysis() {
     )
       .then((results) => {
         if (cancelled) return
+
         const nextData: Record<string, IndicatorsResult> = {}
         const failed: string[] = []
 
@@ -87,6 +101,7 @@ export function IndicatorsAnalysis() {
       .finally(() => {
         if (!cancelled) setLoading(false)
       })
+
     return () => {
       cancelled = true
     }
@@ -97,28 +112,20 @@ export function IndicatorsAnalysis() {
     .filter((result): result is IndicatorsResult => Boolean(result))
 
   const addTicker = (ticker: string) => {
-    setSelectedTickers((current) => {
-      if (current.includes(ticker)) return current
-      return [...current, ticker]
-    })
+    setSelectedTickers((current) => (current.includes(ticker) ? current : [...current, ticker]))
     setPickerOpen(false)
   }
 
   const removeTicker = (ticker: string) => {
-    setSelectedTickers((current) => {
-      if (current.length === 1) return current
-      return current.filter((value) => value !== ticker)
-    })
+    setSelectedTickers((current) => (current.length === 1 ? current : current.filter((value) => value !== ticker)))
   }
 
   return (
-    <div className="flex flex-col h-full space-y-4">
+    <div className="flex h-full flex-col space-y-4">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Indicators Analysis</h2>
-          <p className="text-muted-foreground">
-            Multi-factor metrics and technicals across the execution timeline.
-          </p>
+          <p className="text-muted-foreground">Multi-factor metrics and technicals across the execution timeline.</p>
         </div>
 
         <div className="flex flex-col gap-3 lg:items-end">
@@ -132,6 +139,7 @@ export function IndicatorsAnalysis() {
               <SelectItem value="fixed_4.3">Fixed 4.3% (Static)</SelectItem>
             </SelectContent>
           </Select>
+
           <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
             <PopoverTrigger asChild>
               <Button variant="secondary" className="gap-2">
@@ -155,7 +163,11 @@ export function IndicatorsAnalysis() {
                           className="justify-between"
                         >
                           <span>{ticker}</span>
-                          {selected ? <Check className="h-4 w-4 text-emerald-400" /> : <Search className="h-4 w-4 text-muted-foreground" />}
+                          {selected ? (
+                            <Check className="h-4 w-4 text-emerald-400" />
+                          ) : (
+                            <Search className="h-4 w-4 text-muted-foreground" />
+                          )}
                         </CommandItem>
                       )
                     })}
@@ -189,17 +201,17 @@ export function IndicatorsAnalysis() {
 
       {error && comparisonResults.length === 0 ? (
         <Card className="border-red-900/50 bg-red-950/10">
-          <CardContent className="flex items-center gap-2 text-red-400 py-6">
-            <AlertCircle className="w-5 h-5" />
+          <CardContent className="flex items-center gap-2 py-6 text-red-400">
+            <AlertCircle className="h-5 w-5" />
             <p>{error}</p>
           </CardContent>
         </Card>
       ) : loading && comparisonResults.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center">
-          <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+        <div className="flex flex-1 items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
       ) : (
-        <Tabs defaultValue="technical" className="flex-1 flex flex-col">
+        <Tabs defaultValue="technical" className="flex flex-1 flex-col">
           {error ? (
             <Card className="mb-4 border-amber-900/50 bg-amber-950/10">
               <CardContent className="flex items-center gap-2 py-4 text-amber-300">
@@ -222,9 +234,7 @@ export function IndicatorsAnalysis() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-1">
-                      <div className="text-2xl font-bold text-emerald-400">
-                        {formatCurrency(result?.technical?.latest_price)}
-                      </div>
+                      <div className="text-2xl font-bold text-emerald-400">{formatCurrency(result?.technical?.latest_price)}</div>
                       <div className="text-xs text-muted-foreground">
                         {result?.technical?.sma_trend === "above"
                           ? "Bullish above 200-day trend"
@@ -237,24 +247,24 @@ export function IndicatorsAnalysis() {
                 )
               })}
             </div>
-            
-            <TabsList className="bg-card/50 border border-border">
+
+            <TabsList className="border border-border bg-card/50">
               <TabsTrigger value="technical" className="data-[state=active]:bg-emerald-950/50 data-[state=active]:text-emerald-400">
-                <BarChart3 className="w-4 h-4 mr-2" />
+                <BarChart3 className="mr-2 h-4 w-4" />
                 Technical
               </TabsTrigger>
               <TabsTrigger value="fundamental" className="data-[state=active]:bg-blue-950/50 data-[state=active]:text-blue-400">
-                <DollarSign className="w-4 h-4 mr-2" />
+                <DollarSign className="mr-2 h-4 w-4" />
                 Fundamental
               </TabsTrigger>
               <TabsTrigger value="statistical" className="data-[state=active]:bg-purple-950/50 data-[state=active]:text-purple-400">
-                <BarChart3 className="w-4 h-4 mr-2" />
+                <BarChart3 className="mr-2 h-4 w-4" />
                 Statistical
               </TabsTrigger>
             </TabsList>
           </div>
 
-          <ScrollArea className="flex-1 -mx-4 px-4">
+          <ScrollArea className="-mx-4 flex-1 px-4">
             <TabsContent value="technical" className="mt-0 pb-6 focus-visible:outline-none">
               <TickerAnalyticsPanels
                 results={comparisonResults}
@@ -277,289 +287,272 @@ export function IndicatorsAnalysis() {
         </Tabs>
       )}
     </div>
-  function TickerAnalyticsPanels({
-    results,
-    render,
-  }: {
-    results: IndicatorsResult[]
-    render: (result: IndicatorsResult) => React.ReactNode
-  }) {
-    if (results.length === 0) return <EmptyState />
+  )
+}
 
-    return (
-      <div className="space-y-6">
-        {results.map((result) => (
-          <section key={result.ticker} className="space-y-3">
-            <div className="flex items-center gap-3">
-              <h4 className="text-lg font-semibold text-emerald-400">{result.ticker}</h4>
-              <span className="text-sm text-muted-foreground">
-                {formatCurrency(result.technical?.latest_price)}
-              </span>
+function TickerAnalyticsPanels({
+  results,
+  render,
+}: {
+  results: IndicatorsResult[]
+  render: (result: IndicatorsResult) => React.ReactNode
+}) {
+  if (results.length === 0) return <EmptyState />
+
+  return (
+    <div className="space-y-6">
+      {results.map((result) => (
+        <section key={result.ticker} className="space-y-3">
+          <div className="flex items-center gap-3">
+            <h4 className="text-lg font-semibold text-emerald-400">{result.ticker}</h4>
+            <span className="text-sm text-muted-foreground">{formatCurrency(result.technical?.latest_price)}</span>
+          </div>
+          {render(result)}
+        </section>
+      ))}
+    </div>
+  )
+}
+
+function TechnicalTab({ data }: { data: TechnicalIndicators | null }) {
+  if (!data) return <EmptyState />
+
+  return (
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <Card className="border-border/50 bg-card/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            Moving Averages
+            {data.sma_trend === "above" ? <TrendingUp className="h-4 w-4 text-green-400" /> : <TrendingDown className="h-4 w-4 text-red-400" />}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <MetricRow label="SMA 20 (Short)" value={data.sma_20} prefix="$" />
+          <MetricRow label="SMA 50 (Med)" value={data.sma_50} prefix="$" />
+          <MetricRow label="SMA 200 (Long)" value={data.sma_200} prefix="$" />
+
+          <div className="flex flex-col gap-1 pt-2">
+            <span className="text-xs text-muted-foreground">Current vs SMA 200:</span>
+            <div
+              className={`inline-flex w-fit rounded px-2 py-1 text-sm font-medium ${
+                data.sma_trend === "above" ? "bg-green-950/40 text-green-400" : "bg-red-950/40 text-red-400"
+              }`}
+            >
+              {data.sma_trend === "above" ? "Bullish (Above)" : "Bearish (Below)"}
             </div>
-            {render(result)}
-          </section>
-        ))}
-      </div>
-    )
-  }
+          </div>
+        </CardContent>
+      </Card>
 
-  // ── Helpers ─────────────────────────────────────────────────────────────────-
+      <Card className="border-border/50 bg-card/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium text-muted-foreground">Mean Reversion</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-col gap-1 pb-2">
+            <span className="flex items-baseline gap-1 text-3xl font-bold tracking-tight">
+              {data.mean_reversion_zscore?.toFixed(2) ?? "---"}
+              <span className="text-sm font-normal text-muted-foreground">Z-Score</span>
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {data.mean_reversion_zscore !== null && Math.abs(data.mean_reversion_zscore) > 2
+                ? "Extreme deviation (Reversion likely)"
+                : "Within normal variance"}
+            </span>
+          </div>
+
+          <MetricRow label="Bollinger Band Position" value={data.bollinger_position} suffix="σ" />
+          <MetricRow
+            label="Relative Strength (RSI)"
+            value={data.rsi_14}
+            valueClass={data.rsi_14 && data.rsi_14 > 70 ? "text-red-400" : data.rsi_14 && data.rsi_14 < 30 ? "text-green-400" : ""}
+          />
+        </CardContent>
+      </Card>
+
+      <Card className="border-border/50 bg-card/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium text-muted-foreground">Momentum & Flow</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <MetricRow label="10-Day Momentum" value={data.momentum_10d} suffix="%" colorize />
+          <MetricRow label="20-Day Momentum" value={data.momentum_20d} suffix="%" colorize />
+          <MetricRow label="60-Day Momentum" value={data.momentum_60d} suffix="%" colorize />
+
+          <div className="border-t border-border/50 pt-2">
+            <MetricRow
+              label="Volume Ratio (20d/60d)"
+              value={data.volume_ratio_20_60}
+              suffix="x"
+              valueClass={data.volume_ratio_20_60 && data.volume_ratio_20_60 > 1.2 ? "text-blue-400" : ""}
+            />
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function FundamentalTab({ data }: { data: FundamentalIndicators | null }) {
+  if (!data) return <EmptyState />
+
+  return (
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <Card className="border-border/50 bg-card/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium text-muted-foreground">Valuation</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-col gap-1 pb-2">
+            <span className="text-3xl font-bold tracking-tight text-blue-400">{data.market_cap_label ?? "---"}</span>
+            <span className="text-xs text-muted-foreground">Market Capitalization</span>
+          </div>
+
+          <MetricRow label="Price / Sales" value={data.price_to_sales} suffix="x" />
+          <MetricRow label="EV / Sales" value={data.ev_to_sales} suffix="x" />
+          <MetricRow label="EV/Sales Z-Score" value={data.ev_sales_zscore} colorize invertedColor />
+        </CardContent>
+      </Card>
+
+      <Card className="border-border/50 bg-card/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium text-muted-foreground">Discounted Cash Flow</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-col gap-1 pb-2">
+            <span className="flex items-baseline gap-1 text-3xl font-bold tracking-tight">
+              {data.dcf_npv_gap !== null && data.dcf_npv_gap !== undefined ? (data.dcf_npv_gap * 100).toFixed(1) : "---"}%
+            </span>
+            <span className="text-xs text-muted-foreground">DCF Intrinsic Value Gap</span>
+          </div>
+
+          <MetricRow
+            label="Dynamic Discount Rate"
+            value={data.dynamic_discount_rate !== null && data.dynamic_discount_rate !== undefined ? data.dynamic_discount_rate * 100 : null}
+            suffix="%"
+          />
+          <MetricRow label="Latest Filing Date" stringValue={data.filing_date} />
+          <MetricRow label="Features Updated" stringValue={data.feature_date} />
+        </CardContent>
+      </Card>
+
+      <Card className="border-border/50 bg-card/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium text-muted-foreground">Balance Sheet Health</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <MetricRow label="Revenue (TTM Proxy)" stringValue={data.revenue_label} />
+          <MetricRow label="Net Debt" stringValue={data.net_debt_label} />
+
+          <div className="border-t border-border/50 pt-2">
+            <MetricRow label="Cash to Revenue Ratio" value={data.cash_to_revenue} suffix="x" />
+          </div>
+        </CardContent>
+      </Card>
+
+      {data.dcf_breakdown && data.dcf_breakdown.length > 0 && (
+        <Card className="col-span-1 border-border/50 bg-card/30 md:col-span-2 lg:col-span-3">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">DCF Monthly Projection (5-Year Explicit Forecast)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ScrollArea className="h-[300px] rounded-md border border-border/50">
+              <Table>
+                <TableHeader className="sticky top-0 z-10 bg-muted/50">
+                  <TableRow>
+                    <TableHead className="w-[80px]">Month</TableHead>
+                    <TableHead className="text-right">Cash Flow</TableHead>
+                    <TableHead className="text-right">Discount Factor</TableHead>
+                    <TableHead className="text-right">Present Value</TableHead>
+                    <TableHead className="text-right">Cumulative NPV</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.dcf_breakdown.map((row) => (
+                    <TableRow key={row.month}>
+                      <TableCell className="font-medium text-muted-foreground">{row.month}</TableCell>
+                      <TableCell className="text-right font-mono">${(row.cash_flow / 1e6).toFixed(1)}M</TableCell>
+                      <TableCell className="text-right font-mono">{row.discount_factor.toFixed(4)}x</TableCell>
+                      <TableCell className="text-right font-mono font-medium">${(row.present_value / 1e6).toFixed(1)}M</TableCell>
+                      <TableCell className="text-right font-mono font-medium text-emerald-400">${(row.cumulative_npv / 1e6).toFixed(1)}M</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </ScrollArea>
+            <p className="mt-4 text-center text-xs text-muted-foreground">
+              Note: Month 60 incorporates Terminal Value capitalization. Cash flows represent annualized run-rates distributed linearly equivalent per month.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  )
+}
+
+function StatisticalTab({ data }: { data: StatisticalIndicators | null }) {
+  if (!data) return <EmptyState />
+
+  return (
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <Card className="border-border/50 bg-card/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium text-muted-foreground">Risk Metrics</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <MetricRow label="Risk-Free Rate (Selected)" value={data.risk_free_rate} suffix="%" colorize />
+          <MetricRow label="Volatility (30d)" value={data.volatility_30d} suffix="%" />
+          <MetricRow label="Volatility (1y)" value={data.volatility_1y} suffix="%" />
+          <MetricRow label="Max Drawdown (All-Time)" value={data.max_drawdown} suffix="%" colorize />
+
+          <div className="border-t border-border/50 pt-2">
+            <MetricRow label="95% Value at Risk (1d)" value={data.var_95} suffix="%" />
+            <MetricRow label="99% Value at Risk (1d)" value={data.var_99} suffix="%" />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-border/50 bg-card/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium text-muted-foreground">Return Profile</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <MetricRow label="1-Year Return" value={data.return_1y} suffix="%" colorize />
+          <MetricRow label="3-Month Return" value={data.return_3m} suffix="%" colorize />
+          <MetricRow label="Sharpe Ratio (1y)" value={data.sharpe_1y} />
+
+          <div className="border-t border-border/50 pt-2">
+            <MetricRow label="Skewness" value={data.skewness} />
             <MetricRow label="Kurtosis (Fat Tails)" value={data.kurtosis} />
           </div>
         </CardContent>
       </Card>
 
-      {/* Factor Betas & CAPM */}
-      <Card className="bg-card/30 border-border/50">
+      <Card className="border-border/50 bg-card/30">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium text-muted-foreground">Factor Betas & CAPM</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <MetricRow label="Expected Return (CAPM)" value={data.capm_expected_return} suffix="%" />
-          
-          <div className="pt-2 border-t border-border/50">
+
+          <div className="border-t border-border/50 pt-2">
             <MetricRow label="Beta (SPY)" value={data.beta_spy} />
             <MetricRow label="Beta (10Y Yield)" value={data.beta_tnx} />
             <MetricRow label="Beta (VIX)" value={data.beta_vix} />
           </div>
 
-          <div className="pt-2 border-t border-border/50">
+          <div className="border-t border-border/50 pt-2">
             <MetricRow label="Correlation vs SPY (90d)" value={data.correlation_spy_90d} />
           </div>
         </CardContent>
       </Card>
-
     </div>
-  )
-}
-
-function TechnicalCompareTab({ results }: { results: IndicatorsResult[] }) {
-  return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-      <ComparisonCard title="Trend & Price">
-        <ComparisonTable
-          results={results}
-          rows={[
-            { label: "Last Price", values: results.map((result) => formatCurrency(result.technical?.latest_price)) },
-            { label: "SMA 20", values: results.map((result) => formatCurrency(result.technical?.sma_20)) },
-            { label: "SMA 50", values: results.map((result) => formatCurrency(result.technical?.sma_50)) },
-            { label: "SMA 200", values: results.map((result) => formatCurrency(result.technical?.sma_200)) },
-            {
-              label: "Trend vs 200d",
-              values: results.map((result) => ({
-                label: result.technical?.sma_trend === "above" ? "Bullish" : result.technical?.sma_trend === "below" ? "Bearish" : "---",
-                className: result.technical?.sma_trend === "above" ? "text-green-400" : result.technical?.sma_trend === "below" ? "text-red-400" : "",
-              })),
-            },
-          ]}
-        />
-      </ComparisonCard>
-
-      <ComparisonCard title="Mean Reversion">
-        <ComparisonTable
-          results={results}
-          rows={[
-            {
-              label: "Z-Score",
-              values: results.map((result) => formatSignedNumber(result.technical?.mean_reversion_zscore, 2)),
-            },
-            {
-              label: "Bollinger Position",
-              values: results.map((result) => formatNumber(result.technical?.bollinger_position, 3, "", "σ")),
-            },
-            {
-              label: "RSI 14",
-              values: results.map((result) => ({
-                label: formatNumberLabel(result.technical?.rsi_14),
-                className: result.technical?.rsi_14 !== undefined && result.technical?.rsi_14 !== null
-                  ? result.technical.rsi_14 > 70
-                    ? "text-red-400"
-                    : result.technical.rsi_14 < 30
-                      ? "text-green-400"
-                      : ""
-                  : "",
-              })),
-            },
-          ]}
-        />
-      </ComparisonCard>
-
-      <ComparisonCard title="Momentum & Flow">
-        <ComparisonTable
-          results={results}
-          rows={[
-            {
-              label: "10D Momentum",
-              values: results.map((result) => formatPercent(result.technical?.momentum_10d, 2, true)),
-            },
-            {
-              label: "20D Momentum",
-              values: results.map((result) => formatPercent(result.technical?.momentum_20d, 2, true)),
-            },
-            {
-              label: "60D Momentum",
-              values: results.map((result) => formatPercent(result.technical?.momentum_60d, 2, true)),
-            },
-            {
-              label: "Volume Ratio",
-              values: results.map((result) => ({
-                label: formatNumberLabel(result.technical?.volume_ratio_20_60, 3, "", "x"),
-                className: result.technical?.volume_ratio_20_60 !== undefined && result.technical?.volume_ratio_20_60 !== null && result.technical.volume_ratio_20_60 > 1.2 ? "text-blue-400" : "",
-              })),
-            },
-          ]}
-        />
-      </ComparisonCard>
-    </div>
-  )
-}
-
-function FundamentalCompareTab({ results }: { results: IndicatorsResult[] }) {
-  return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-      <ComparisonCard title="Valuation">
-        <ComparisonTable
-          results={results}
-          rows={[
-            { label: "Market Cap", values: results.map((result) => result.fundamental?.market_cap_label ?? "---") },
-            { label: "Price / Sales", values: results.map((result) => formatNumber(result.fundamental?.price_to_sales, 2, "", "x")) },
-            { label: "EV / Sales", values: results.map((result) => formatNumber(result.fundamental?.ev_to_sales, 2, "", "x")) },
-            { label: "EV/Sales Z", values: results.map((result) => formatPercentless(result.fundamental?.ev_sales_zscore, true)) },
-          ]}
-        />
-      </ComparisonCard>
-
-      <ComparisonCard title="Discounted Cash Flow">
-        <ComparisonTable
-          results={results}
-          rows={[
-            { label: "DCF Gap", values: results.map((result) => formatScaledPercent(result.fundamental?.dcf_npv_gap, 1, true)) },
-            { label: "Discount Rate", values: results.map((result) => formatScaledPercent(result.fundamental?.dynamic_discount_rate, 2)) },
-            { label: "Latest Filing", values: results.map((result) => result.fundamental?.filing_date ?? "---") },
-            { label: "Features Updated", values: results.map((result) => result.fundamental?.feature_date ?? "---") },
-          ]}
-        />
-      </ComparisonCard>
-
-      <ComparisonCard title="Balance Sheet Health">
-        <ComparisonTable
-          results={results}
-          rows={[
-            { label: "Revenue", values: results.map((result) => result.fundamental?.revenue_label ?? "---") },
-            { label: "Net Debt", values: results.map((result) => result.fundamental?.net_debt_label ?? "---") },
-            { label: "Cash / Revenue", values: results.map((result) => formatNumber(result.fundamental?.cash_to_revenue, 2, "", "x")) },
-          ]}
-        />
-      </ComparisonCard>
-    </div>
-  )
-}
-
-function StatisticalCompareTab({ results }: { results: IndicatorsResult[] }) {
-  return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-      <ComparisonCard title="Risk Metrics">
-        <ComparisonTable
-          results={results}
-          rows={[
-            { label: "Risk-Free Rate", values: results.map((result) => formatPercent(result.statistical?.risk_free_rate, 2, true)) },
-            { label: "Volatility 30d", values: results.map((result) => formatPercent(result.statistical?.volatility_30d, 2)) },
-            { label: "Volatility 1y", values: results.map((result) => formatPercent(result.statistical?.volatility_1y, 2)) },
-            { label: "Max Drawdown", values: results.map((result) => formatPercent(result.statistical?.max_drawdown, 2, true)) },
-            { label: "VaR 95", values: results.map((result) => formatPercent(result.statistical?.var_95, 2)) },
-            { label: "VaR 99", values: results.map((result) => formatPercent(result.statistical?.var_99, 2)) },
-          ]}
-        />
-      </ComparisonCard>
-
-      <ComparisonCard title="Return Profile">
-        <ComparisonTable
-          results={results}
-          rows={[
-            { label: "1Y Return", values: results.map((result) => formatPercent(result.statistical?.return_1y, 2, true)) },
-            { label: "3M Return", values: results.map((result) => formatPercent(result.statistical?.return_3m, 2, true)) },
-            { label: "Sharpe 1Y", values: results.map((result) => formatPercentless(result.statistical?.sharpe_1y)) },
-            { label: "Skewness", values: results.map((result) => formatPercentless(result.statistical?.skewness)) },
-            { label: "Kurtosis", values: results.map((result) => formatPercentless(result.statistical?.kurtosis)) },
-          ]}
-        />
-      </ComparisonCard>
-
-      <ComparisonCard title="Factor Betas & CAPM">
-        <ComparisonTable
-          results={results}
-          rows={[
-            { label: "CAPM Return", values: results.map((result) => formatPercent(result.statistical?.capm_expected_return, 2)) },
-            { label: "Beta SPY", values: results.map((result) => formatPercentless(result.statistical?.beta_spy)) },
-            { label: "Beta 10Y", values: results.map((result) => formatPercentless(result.statistical?.beta_tnx)) },
-            { label: "Beta VIX", values: results.map((result) => formatPercentless(result.statistical?.beta_vix)) },
-            { label: "Corr SPY 90d", values: results.map((result) => formatPercentless(result.statistical?.correlation_spy_90d)) },
-          ]}
-        />
-      </ComparisonCard>
-    </div>
-  )
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-type ComparisonCell = string | { label: string; className?: string }
-
-interface ComparisonRow {
-  label: string
-  values: ComparisonCell[]
-}
-
-function ComparisonCard({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <Card className="border-border/50 bg-card/30">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {children}
-      </CardContent>
-    </Card>
-  )
-}
-
-function ComparisonTable({ results, rows }: { results: IndicatorsResult[]; rows: ComparisonRow[] }) {
-  return (
-    <ScrollArea className="w-full">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="min-w-[180px]">Metric</TableHead>
-            {results.map((result) => (
-              <TableHead key={result.ticker} className="min-w-[120px] text-right">
-                {result.ticker}
-              </TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map((row) => (
-            <TableRow key={row.label}>
-              <TableCell className="font-medium text-muted-foreground">{row.label}</TableCell>
-              {row.values.map((value, index) => {
-                const cell = typeof value === "string" ? { label: value } : value
-                return (
-                  <TableCell key={`${row.label}-${results[index]?.ticker ?? index}`} className={`text-right font-mono ${cell.className ?? ""}`}>
-                    {cell.label}
-                  </TableCell>
-                )
-              })}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </ScrollArea>
   )
 }
 
 function EmptyState() {
   return (
-    <div className="flex items-center justify-center p-12 mt-4 border border-dashed border-border/50 rounded-lg text-muted-foreground">
+    <div className="mt-4 flex items-center justify-center rounded-lg border border-dashed border-border/50 p-12 text-muted-foreground">
       No data available for this category.
     </div>
   )
@@ -576,7 +569,16 @@ interface MetricRowProps {
   valueClass?: string
 }
 
-function MetricRow({ label, value, stringValue, prefix = "", suffix = "", colorize = false, invertedColor = false, valueClass = "" }: MetricRowProps) {
+function MetricRow({
+  label,
+  value,
+  stringValue,
+  prefix = "",
+  suffix = "",
+  colorize = false,
+  invertedColor = false,
+  valueClass = "",
+}: MetricRowProps) {
   let colorStr = ""
   if (colorize && value !== undefined && value !== null) {
     if (value > 0) colorStr = invertedColor ? "text-red-400" : "text-green-400"
@@ -587,8 +589,7 @@ function MetricRow({ label, value, stringValue, prefix = "", suffix = "", colori
     <div className="flex items-center justify-between">
       <span className="text-sm text-muted-foreground">{label}</span>
       <span className={`font-mono font-medium ${colorStr} ${valueClass}`}>
-        {stringValue !== undefined && stringValue !== null ? stringValue :
-         value !== undefined && value !== null ? `${prefix}${value}${suffix}` : '---'}
+        {stringValue !== undefined && stringValue !== null ? stringValue : value !== undefined && value !== null ? `${prefix}${value}${suffix}` : "---"}
       </span>
     </div>
   )
