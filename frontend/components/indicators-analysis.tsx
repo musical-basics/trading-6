@@ -25,7 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { AlertCircle, BarChart3, Check, DollarSign, Loader2, Plus, Search, X } from "lucide-react"
+import { AlertCircle, BarChart3, Check, DollarSign, Loader2, Plus, Search, TrendingDown, TrendingUp, X } from "lucide-react"
 
 export function IndicatorsAnalysis() {
   const [selectedTickers, setSelectedTickers] = useState(["AAPL"])
