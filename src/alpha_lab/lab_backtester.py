@@ -32,10 +32,14 @@ def _load_aligned_data() -> pl.DataFrame:
 
     manifest = get_manifest()
     
-    # Check if we can use cached aligned data
-    cached_result = manifest.load_cached("_aligned_data_full")
-    if cached_result is not None:
-        return cached_result
+    # Check if we can use cached aligned data.
+    # Newer cache manifest validation may reject synthetic keys; fail open.
+    try:
+        cached_result = manifest.load_cached("_aligned_data_full")
+        if cached_result is not None:
+            return cached_result
+    except KeyError:
+        cached_result = None
 
     # Keep data prep identical to Strategy Studio tournament system.
     df = align_fundamentals()
@@ -68,8 +72,11 @@ def _load_aligned_data() -> pl.DataFrame:
         if "ticker" in emap.columns and "entity_id" in emap.columns:
             df = df.join(emap.select(["entity_id", "ticker"]), on="entity_id", how="left")
 
-    # Cache the full aligned result
-    manifest.save_cached("_aligned_data_full", df)
+    # Cache the full aligned result when manifest supports this key.
+    try:
+        manifest.save_cached("_aligned_data_full", df)
+    except KeyError:
+        pass
     
     return df
 

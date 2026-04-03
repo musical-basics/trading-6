@@ -316,8 +316,26 @@ def generate_strategy(
     # Parse response
     name, rationale, code = _parse_response(text)
 
-    # AST Guardrail Verification
-    _enforce_ast_guardrails(code)
+    # AST Guardrail Verification (with one-shot auto-repair)
+    try:
+        _enforce_ast_guardrails(code)
+    except ValueError as guardrail_err:
+        repaired_code, repair_in, repair_out = _repair_code_for_guardrails(
+            client=client,
+            model_id=tier["model_id"],
+            system_prompt=full_system_prompt,
+            strategy_name=name,
+            original_code=code,
+            guardrail_error=str(guardrail_err),
+        )
+        code = repaired_code
+        input_tokens += repair_in
+        output_tokens += repair_out
+        cost_usd = (
+            (input_tokens / 1_000_000) * tier["input_cost_per_mtok"]
+            + (output_tokens / 1_000_000) * tier["output_cost_per_mtok"]
+        )
+        _enforce_ast_guardrails(code)
 
     return StrategyHypothesis(
         name=name,
@@ -374,6 +392,66 @@ def _parse_response(text: str) -> tuple[str, str, str]:
         )
 
     return name, rationale, code
+
+
+def _extract_code_block(text: str) -> str:
+    """Extract Python code block or raw function text from an LLM response."""
+    for pattern in [
+        r"```python\s*\n(.*?)```",
+        r"```py\s*\n(.*?)```",
+        r"```\s*\n(.*?)```",
+    ]:
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+
+    func_match = re.search(
+        r"(def\s+\w+\s*\(df:\s*pl\.DataFrame\).*?)(?=\n\S|\Z)",
+        text,
+        re.DOTALL,
+    )
+    if func_match:
+        return func_match.group(1).strip()
+    return ""
+
+
+def _repair_code_for_guardrails(
+    client: anthropic.Anthropic,
+    model_id: str,
+    system_prompt: str,
+    strategy_name: str,
+    original_code: str,
+    guardrail_error: str,
+) -> tuple[str, int, int]:
+    """Ask the model to minimally patch generated code to satisfy AST guardrails."""
+    repair_prompt = (
+        "Your previous strategy code failed AST guardrail checks. "
+        "Return a corrected version of the SAME strategy with minimal edits.\n\n"
+        f"Guardrail error:\n{guardrail_error}\n\n"
+        "Hard requirements:\n"
+        "1) Keep function name and raw_weight alias naming consistent with the current strategy.\n"
+        "2) If fundamental fields are used, apply filing_date stale + SEC-lag circuit-breaker directly on final raw_weight_* alias.\n"
+        "3) Do not introduce new imports.\n"
+        "4) Return ONLY a Python code block.\n\n"
+        f"Current strategy name: {strategy_name}\n"
+        "Current code:\n"
+        f"```python\n{original_code}\n```"
+    )
+
+    response = client.messages.create(
+        model=model_id,
+        max_tokens=2500,
+        system=system_prompt,
+        messages=[{"role": "user", "content": repair_prompt}],
+    )
+    repaired_text = response.content[0].text
+    repaired_code = _extract_code_block(repaired_text)
+    if not repaired_code:
+        raise ValueError(
+            "Guardrail auto-repair failed: model did not return valid code. "
+            f"Last guardrail error: {guardrail_error}"
+        )
+    return repaired_code, response.usage.input_tokens, response.usage.output_tokens
 
 
 def get_tier_info() -> dict:
@@ -438,10 +516,12 @@ def combine_strategies(
     if user_guidance:
         user_msg += f"\nAdditional guidance: {user_guidance}\n"
 
+    full_system_prompt = _build_system_prompt() + COMBINE_STYLE_ADDON + _build_data_profile_block()
+
     response = client.messages.create(
         model=tier["model_id"],
         max_tokens=4000,
-        system=_build_system_prompt() + COMBINE_STYLE_ADDON + _build_data_profile_block(),
+        system=full_system_prompt,
         messages=[{"role": "user", "content": user_msg}],
     )
 
@@ -455,8 +535,26 @@ def combine_strategies(
 
     name, rationale, code = _parse_response(text)
 
-    # AST Guardrail Verification
-    _enforce_ast_guardrails(code)
+    # AST Guardrail Verification (with one-shot auto-repair)
+    try:
+        _enforce_ast_guardrails(code)
+    except ValueError as guardrail_err:
+        repaired_code, repair_in, repair_out = _repair_code_for_guardrails(
+            client=client,
+            model_id=tier["model_id"],
+            system_prompt=full_system_prompt,
+            strategy_name=name,
+            original_code=code,
+            guardrail_error=str(guardrail_err),
+        )
+        code = repaired_code
+        input_tokens += repair_in
+        output_tokens += repair_out
+        cost_usd = (
+            (input_tokens / 1_000_000) * tier["input_cost_per_mtok"]
+            + (output_tokens / 1_000_000) * tier["output_cost_per_mtok"]
+        )
+        _enforce_ast_guardrails(code)
 
     return StrategyHypothesis(
         name=name,
