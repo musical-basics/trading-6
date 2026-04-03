@@ -325,6 +325,26 @@ def run_raw_backtest(
         )
 
         if portfolio.is_empty():
+            if enable_self_healing:
+                try:
+                    from src.alpha_lab.strategy_generator import generate_strategy
+                    print("  🔧 Self-healing: strategy generated no active positions, relaxing constraints...")
+                    fix_prompt = (
+                        "The following strategy code runs but generated zero active positions across the backtest.\n"
+                        "Relax thresholds/filters so the strategy still follows its core idea, but produces "
+                        "a non-trivial number of trades. Keep all anti-lookahead and filing_date safeguards.\n\n"
+                        f"```python\n{current_code}\n```"
+                    )
+                    fixed = generate_strategy(prompt=fix_prompt, model_tier="haiku")
+                    retry = run_raw_backtest(
+                        strategy_code=fixed.code,
+                        starting_capital=starting_capital,
+                        enable_self_healing=False,
+                    )
+                    retry["final_code"] = fixed.code
+                    return retry
+                except Exception:
+                    pass
             return {"error": "Strategy generated no active positions", "final_code": current_code}
 
         portfolio = portfolio.with_columns(
