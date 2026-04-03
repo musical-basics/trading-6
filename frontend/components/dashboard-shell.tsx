@@ -19,6 +19,7 @@ import {
   Sparkles,
   BookOpen,
   Briefcase,
+  Sigma,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -37,8 +38,10 @@ import AlphaLab from "./alpha-lab"
 import { AlignedDataPipeline } from "./aligned-pipeline"
 import { ForensicAuditor } from "./forensic-auditor"
 import { LivePositions } from "./live-positions"
+import { DataLibrary } from "./data-library"
+import { MetricsLibrary } from "./metrics-library"
 
-type View = "data-pipeline" | "aligned-pipeline" | "indicators-analysis" | "alpha-lab" | "forensic-auditor" | "strategy-studio" | "xray-inspector" | "risk-war-room" | "execution-ledger" | "trader-manager" | "live-positions"
+type View = "data-pipeline" | "data-library" | "metrics-library" | "aligned-pipeline" | "indicators-analysis" | "alpha-lab" | "forensic-auditor" | "strategy-studio" | "xray-inspector" | "risk-war-room" | "execution-ledger" | "trader-manager" | "live-positions"
 
 const navItems = [
   {
@@ -61,6 +64,20 @@ const navItems = [
     icon: BookOpen,
     description: "LLM Statistical Context",
     badge: "Profile"
+  },
+  {
+    id: "data-library" as const,
+    label: "Data Library",
+    icon: BookOpen,
+    description: "Header Viewer",
+    badge: "Schema"
+  },
+  {
+    id: "metrics-library" as const,
+    label: "Metrics Library",
+    icon: Sigma,
+    description: "AI Access Matrix",
+    badge: "Metrics"
   },
   {
     id: "alpha-lab" as const,
@@ -282,6 +299,8 @@ export function DashboardShell() {
         {/* Page Content */}
         <main className="flex-1 overflow-auto p-4 lg:p-6">
           {currentView === "data-pipeline" && <DataPipeline />}
+          {currentView === "data-library" && <DataLibrary />}
+          {currentView === "metrics-library" && <MetricsLibrary />}
           {currentView === "aligned-pipeline" && <AlignedDataPipeline />}
           {currentView === "indicators-analysis" && <IndicatorsAnalysis />}
           {currentView === "alpha-lab" && <AlphaLab />}

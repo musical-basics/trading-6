@@ -75,36 +75,186 @@ def _load_aligned_data() -> pl.DataFrame:
 
 
 def _compute_metrics(equity: np.ndarray, daily_returns: np.ndarray) -> dict:
-    """Compute backtest metrics from equity and daily return arrays."""
-    trading_days = len(daily_returns)
+    """Compute comprehensive strategy performance metrics from equity curve."""
+    n = len(daily_returns)
 
-    # Sharpe
-    if daily_returns.std() > 0:
-        sharpe = float(daily_returns.mean() / daily_returns.std() * np.sqrt(252))
-    else:
-        sharpe = 0.0
-
-    # Max Drawdown
-    running_max = np.maximum.accumulate(equity)
-    drawdown = 1 - equity / running_max
-    max_dd = float(drawdown.max())
-
-    # CAGR
-    if trading_days > 0 and equity[0] > 0:
+    # 1) Basic returns
+    total_return = float(equity[-1] / equity[0] - 1) if equity[0] > 0 else 0.0
+    if n > 0 and equity[0] > 0:
         total_factor = equity[-1] / equity[0]
-        cagr = float(total_factor ** (252 / max(trading_days, 1)) - 1)
+        years = n / 252.0
+        cagr = float(total_factor ** (1 / years) - 1) if years > 0 else 0.0
     else:
         cagr = 0.0
 
-    # Total Return
-    total_return = float(equity[-1] / equity[0] - 1) if equity[0] > 0 else 0.0
+    # 2) Volatility metrics
+    daily_vol = float(daily_returns.std()) if len(daily_returns) > 1 else 0.0
+    annual_volatility = daily_vol * np.sqrt(252)
+
+    downside_returns = daily_returns[daily_returns < 0]
+    downside_vol = float(downside_returns.std()) if len(downside_returns) > 1 else 0.0
+    annual_downside_vol = downside_vol * np.sqrt(252)
+
+    # 3) Risk-adjusted returns
+    if daily_vol > 0:
+        sharpe = float(daily_returns.mean() / daily_vol * np.sqrt(252))
+    else:
+        sharpe = 0.0
+
+    if annual_downside_vol > 0:
+        sortino = float(cagr / annual_downside_vol)
+    else:
+        sortino = 0.0
+
+    # 4) Drawdown analytics
+    running_max = np.maximum.accumulate(equity)
+    drawdown = 1 - equity / running_max
+
+    max_dd = float(np.max(drawdown)) if len(drawdown) > 0 else 0.0
+    avg_dd = float(np.mean(drawdown[drawdown > 0])) if np.any(drawdown > 0) else 0.0
+
+    calmar = float(cagr / abs(max_dd)) if max_dd != 0 else 0.0
+
+    max_dd_dollars = equity[0] * max_dd
+    recovery_factor = (
+        float(total_return * equity[0] / max_dd_dollars)
+        if max_dd_dollars > 0
+        else 0.0
+    )
+
+    in_drawdown = drawdown > 0
+    dd_durations = []
+    current_duration = 0
+    for in_dd in in_drawdown:
+        if in_dd:
+            current_duration += 1
+        else:
+            if current_duration > 0:
+                dd_durations.append(current_duration)
+            current_duration = 0
+    if current_duration > 0:
+        dd_durations.append(current_duration)
+
+    max_dd_duration = max(dd_durations) if dd_durations else 0
+    avg_dd_duration = float(np.mean(dd_durations)) if dd_durations else 0.0
+
+    # 5) Consistency metrics
+    positive_days = np.sum(daily_returns > 0)
+    negative_days = np.sum(daily_returns < 0)
+    win_rate = float(positive_days / max(n, 1))
+
+    best_day = float(np.max(daily_returns)) if len(daily_returns) > 0 else 0.0
+    worst_day = float(np.min(daily_returns)) if len(daily_returns) > 0 else 0.0
+
+    max_consecutive_wins = 0
+    max_consecutive_losses = 0
+    current_wins = 0
+    current_losses = 0
+
+    for ret in daily_returns:
+        if ret > 0:
+            current_wins += 1
+            max_consecutive_wins = max(max_consecutive_wins, current_wins)
+            current_losses = 0
+        elif ret < 0:
+            current_losses += 1
+            max_consecutive_losses = max(max_consecutive_losses, current_losses)
+            current_wins = 0
+        else:
+            current_wins = 0
+            current_losses = 0
+
+    # 6) Profit metrics
+    gain_sum = np.sum(daily_returns[daily_returns > 0])
+    loss_sum = np.sum(daily_returns[daily_returns < 0])
+
+    profit_factor = float(gain_sum / abs(loss_sum)) if loss_sum != 0 else 0.0
+    avg_gain = float(gain_sum / max(positive_days, 1))
+    avg_loss = float(loss_sum / max(negative_days, 1)) if negative_days > 0 else 0.0
+    expectancy = float((win_rate * avg_gain) + ((1 - win_rate) * avg_loss))
+
+    # 7) Monthly analytics (approximate: 21 trading days per month)
+    monthly_returns = []
+    for i in range(0, len(daily_returns), 21):
+        month_end_idx = min(i + 21, len(daily_returns))
+        month_rets = daily_returns[i:month_end_idx]
+        if len(month_rets) > 0:
+            monthly_return = float(np.prod(1 + month_rets) - 1)
+            monthly_returns.append(monthly_return)
+
+    positive_months = sum(1 for mr in monthly_returns if mr > 0)
+    negative_months = sum(1 for mr in monthly_returns if mr < 0)
+
+    best_month = float(np.max(monthly_returns)) if monthly_returns else 0.0
+    worst_month = float(np.min(monthly_returns)) if monthly_returns else 0.0
+
+    # 8) Distribution metrics
+    from scipy import stats
+
+    skewness = float(stats.skew(daily_returns)) if len(daily_returns) > 2 else 0.0
+    kurtosis = float(stats.kurtosis(daily_returns)) if len(daily_returns) > 3 else 0.0
+
+    var_95 = float(np.percentile(daily_returns, 5))
+    cvar_95 = (
+        float(np.mean(daily_returns[daily_returns <= var_95]))
+        if np.any(daily_returns <= var_95)
+        else var_95
+    )
+
+    # 9) Return/risk ratio
+    return_risk_ratio = (
+        float(total_return / annual_volatility) if annual_volatility > 0 else 0.0
+    )
 
     return {
-        "sharpe": round(sharpe, 3),
-        "max_drawdown": round(max_dd, 4),
-        "cagr": round(cagr, 4),
+        # Basic returns
         "total_return": round(total_return, 4),
-        "trading_days": trading_days,
+        "cagr": round(cagr, 4),
+        "trading_days": n,
+
+        # Volatility
+        "volatility": round(annual_volatility, 4),
+        "downside_volatility": round(annual_downside_vol, 4),
+
+        # Risk-adjusted returns
+        "sharpe": round(sharpe, 3),
+        "sortino": round(sortino, 3),
+        "calmar": round(calmar, 3),
+        "return_risk_ratio": round(return_risk_ratio, 3),
+
+        # Drawdown analytics
+        "max_drawdown": round(max_dd, 4),
+        "avg_drawdown": round(avg_dd, 4),
+        "max_drawdown_duration": max_dd_duration,
+        "avg_drawdown_duration": round(avg_dd_duration, 1),
+        "recovery_factor": round(recovery_factor, 3),
+
+        # Consistency
+        "win_rate": round(win_rate, 3),
+        "positive_days": int(positive_days),
+        "negative_days": int(negative_days),
+        "best_day": round(best_day, 4),
+        "worst_day": round(worst_day, 4),
+        "max_consecutive_wins": int(max_consecutive_wins),
+        "max_consecutive_losses": int(max_consecutive_losses),
+
+        # Profit metrics
+        "profit_factor": round(profit_factor, 3),
+        "avg_gain": round(avg_gain, 4),
+        "avg_loss": round(avg_loss, 4),
+        "expectancy": round(expectancy, 4),
+
+        # Monthly analytics
+        "positive_months": int(positive_months),
+        "negative_months": int(negative_months),
+        "best_month": round(best_month, 4),
+        "worst_month": round(worst_month, 4),
+
+        # Distribution metrics
+        "skewness": round(skewness, 3),
+        "kurtosis": round(kurtosis, 3),
+        "var_95": round(var_95, 4),
+        "cvar_95": round(cvar_95, 4),
     }
 
 

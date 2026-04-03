@@ -6,6 +6,18 @@
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
 
+async function apiRequest(input: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(`${API_BASE}${input}`, init)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `Network error calling ${API_BASE}${input}: ${message}. ` +
+        "Check that FastAPI is running, NEXT_PUBLIC_API_URL is correct, and your browser can reach that host/port.",
+    )
+  }
+}
+
 // ── Types ─────────────────────────────────────────────────
 
 export interface Strategy {
@@ -90,7 +102,7 @@ export interface TournamentResponse {
  * Fetch all available strategies from the backend.
  */
 export async function fetchStrategies(): Promise<Strategy[]> {
-  const res = await fetch(`${API_BASE}/api/strategies/list`)
+  const res = await apiRequest("/api/strategies/list")
   if (!res.ok) throw new Error(`Failed to fetch strategies: ${res.status}`)
   const data = await res.json()
   return data.strategies as Strategy[]
@@ -105,7 +117,7 @@ export async function runTournament(params: {
   endDate?: string
   startingCapital?: number
 }): Promise<TournamentResponse> {
-  const res = await fetch(`${API_BASE}/api/strategies/tournament`, {
+  const res = await apiRequest("/api/strategies/tournament", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -362,6 +374,75 @@ export async function fetchPipelineCoverage(): Promise<TickerCoverage[]> {
   if (!res.ok) return []
   const data = await res.json()
   return data.tickers ?? []
+}
+
+// ── Data Library API ───────────────────────────────────────
+
+export interface DataLibraryColumn {
+  name: string
+  dtype: string
+  null_pct: number
+}
+
+export interface DataLibraryComponent {
+  component: string
+  available: boolean
+  label: string
+  date_col: string
+  key_cols: string[]
+  count_meaning: string
+  row_count: number
+  entity_count: number | null
+  date_start: string | null
+  date_end: string | null
+  columns: DataLibraryColumn[]
+}
+
+export interface DataLibraryResponse {
+  components: Record<string, DataLibraryComponent>
+}
+
+export async function fetchDataLibrary(): Promise<DataLibraryResponse> {
+  const res = await fetch(`${API_BASE}/api/diagnostics/data-library`)
+  if (!res.ok) {
+    throw new Error(`Failed to fetch data library: ${res.status}`)
+  }
+  return (await res.json()) as DataLibraryResponse
+}
+
+// ── Metrics Library API ───────────────────────────────────
+
+export interface MetricsLibrarySection {
+  label: string
+  consumer: string
+  keys: string[]
+}
+
+export interface MetricsLibraryAccess {
+  has_tournament_metrics: boolean
+  has_alpha_lab_metrics: boolean
+  notes: string
+}
+
+export interface MetricsLibraryResponse {
+  metrics: {
+    tournament_pipeline: MetricsLibrarySection
+    alpha_lab_backtester: MetricsLibrarySection
+    forensic_audit: MetricsLibrarySection
+  }
+  access_matrix: Record<string, MetricsLibraryAccess>
+  comparison: {
+    shared_keys: string[]
+    tournament_only_keys: string[]
+  }
+}
+
+export async function fetchMetricsLibrary(): Promise<MetricsLibraryResponse> {
+  const res = await fetch(`${API_BASE}/api/diagnostics/metrics-library`)
+  if (!res.ok) {
+    throw new Error(`Failed to fetch metrics library: ${res.status}`)
+  }
+  return (await res.json()) as MetricsLibraryResponse
 }
 
 // ── Indicators API ───────────────────────────────────────────

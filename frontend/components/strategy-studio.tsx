@@ -61,6 +61,14 @@ function getCategoryForId(id: string): string {
 // ── Component ───────────────────────────────────────────────
 
 export function StrategyStudio() {
+  const formatPct = (value: number | null | undefined, digits = 1): string => {
+    return Number.isFinite(value) ? `${(value as number).toFixed(digits)}%` : "--"
+  }
+
+  const formatNum = (value: number | null | undefined, digits = 2): string => {
+    return Number.isFinite(value) ? (value as number).toFixed(digits) : "--"
+  }
+
   // Strategy list from API
   const [strategies, setStrategies] = useState<Strategy[]>([])
   const [loadingStrategies, setLoadingStrategies] = useState(true)
@@ -204,6 +212,7 @@ export function StrategyStudio() {
       cagr: s.metrics.cagr * 100,
       sharpe: s.metrics.sharpe,
       sortino: s.metrics.sortino,
+      calmar: s.metrics.calmar,
       maxDrawdown: s.metrics.max_drawdown * 100,
       volatility: s.metrics.volatility * 100,
       winRate: s.metrics.win_rate * 100,
@@ -508,45 +517,45 @@ export function StrategyStudio() {
                         <TableCell className="text-right font-mono text-xs whitespace-nowrap">
                           <span
                             className={
-                              metric.totalReturn >= 0
+                              Number.isFinite(metric.totalReturn) && metric.totalReturn >= 0
                                 ? "text-green-400"
                                 : "text-red-400"
                             }
                           >
-                            {metric.totalReturn >= 0 ? (
+                            {Number.isFinite(metric.totalReturn) && metric.totalReturn >= 0 ? (
                               <TrendingUp className="w-3 h-3 inline mr-1" />
                             ) : (
                               <TrendingDown className="w-3 h-3 inline mr-1" />
                             )}
-                            {metric.totalReturn.toFixed(1)}%
+                            {formatPct(metric.totalReturn, 1)}
                           </span>
                         </TableCell>
                         <TableCell className="text-right font-mono text-xs text-foreground whitespace-nowrap">
-                          {metric.cagr.toFixed(1)}%
+                          {formatPct(metric.cagr, 1)}
                         </TableCell>
                         <TableCell className="text-right font-mono text-xs text-foreground whitespace-nowrap">
-                          {metric.volatility.toFixed(1)}%
+                          {formatPct(metric.volatility, 1)}
                         </TableCell>
                         <TableCell className="text-right font-mono text-xs text-foreground whitespace-nowrap">
-                          {metric.sharpe.toFixed(2)}
+                          {formatNum(metric.sharpe, 2)}
                         </TableCell>
                         <TableCell className="text-right font-mono text-xs text-foreground whitespace-nowrap">
-                          {metric.sortino.toFixed(2)}
+                          {formatNum(metric.sortino, 2)}
                         </TableCell>
                         <TableCell className="text-right font-mono text-xs text-foreground whitespace-nowrap">
-                          {metric.calmar.toFixed(2)}
+                          {formatNum(metric.calmar, 2)}
                         </TableCell>
                         <TableCell className="text-right font-mono text-xs whitespace-nowrap">
                           <span className="text-red-400">
                             <TrendingDown className="w-3 h-3 inline mr-1" />
-                            {metric.maxDrawdown.toFixed(1)}%
+                            {formatPct(metric.maxDrawdown, 1)}
                           </span>
                         </TableCell>
                         <TableCell className="text-right font-mono text-xs text-foreground whitespace-nowrap">
-                          {metric.winRate.toFixed(1)}%
+                          {formatPct(metric.winRate, 1)}
                         </TableCell>
                         <TableCell className="text-right font-mono text-xs text-foreground whitespace-nowrap">
-                          {metric.profitFactor.toFixed(2)}
+                          {formatNum(metric.profitFactor, 2)}
                         </TableCell>
                       </TableRow>
                     ))}

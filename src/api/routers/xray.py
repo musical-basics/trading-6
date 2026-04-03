@@ -8,6 +8,7 @@ vertical slice showing every stage of calculation.
 from __future__ import annotations
 
 import os
+import numpy as np
 
 from fastapi import APIRouter, HTTPException
 import polars as pl
@@ -15,6 +16,195 @@ import polars as pl
 from src.core.duckdb_store import get_parquet_path, PARQUET_DIR
 
 router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
+
+
+@router.get("/data-library")
+async def data_library():
+    """Return schema/header metadata for major pipeline components.
+
+    This endpoint intentionally returns only column-level metadata, not row data.
+    """
+    components = {
+        "market_data": {
+            "label": "Market Data",
+            "date_col": "date",
+            "key_cols": ["adj_close", "volume", "daily_return"],
+            "count_meaning": "Per-ticker count equals the number of market rows (typically trading days).",
+        },
+        "fundamental": {
+            "label": "Fundamentals",
+            "date_col": "filing_date",
+            "key_cols": ["revenue", "total_debt", "cash", "shares_out"],
+            "count_meaning": "Per-ticker count equals quarterly filing snapshots available after alignment rules.",
+        },
+        "feature": {
+            "label": "Features",
+            "date_col": "date",
+            "key_cols": ["ev_sales_zscore", "dynamic_discount_rate", "dcf_npv_gap", "beta_spy"],
+            "count_meaning": "Per-ticker count equals rows where feature-engine output exists for that date.",
+        },
+        "action_intent": {
+            "label": "Strategy Intent",
+            "date_col": "date",
+            "key_cols": ["strategy_id", "raw_weight"],
+            "count_meaning": "Per-ticker count equals rows of generated strategy intents (strategy_id + raw_weight) for that ticker.",
+        },
+        "target_portfolio": {
+            "label": "Risk / Target",
+            "date_col": "date",
+            "key_cols": ["target_weight", "mcr"],
+            "count_meaning": "Per-ticker count equals rows after risk scaling and target-weight construction.",
+        },
+    }
+
+    out: dict[str, dict] = {}
+    for comp_name, meta in components.items():
+        path = get_parquet_path(comp_name)
+        if not os.path.exists(path):
+            out[comp_name] = {
+                "component": comp_name,
+                "available": False,
+                "label": meta["label"],
+                "date_col": meta["date_col"],
+                "key_cols": meta["key_cols"],
+                "count_meaning": meta["count_meaning"],
+                "row_count": 0,
+                "entity_count": None,
+                "date_start": None,
+                "date_end": None,
+                "columns": [],
+            }
+            continue
+
+        try:
+            df = pl.read_parquet(path)
+        except Exception:
+            out[comp_name] = {
+                "component": comp_name,
+                "available": False,
+                "label": meta["label"],
+                "date_col": meta["date_col"],
+                "key_cols": meta["key_cols"],
+                "count_meaning": meta["count_meaning"],
+                "row_count": 0,
+                "entity_count": None,
+                "date_start": None,
+                "date_end": None,
+                "columns": [],
+            }
+            continue
+
+        n = len(df)
+        date_col = meta["date_col"]
+        date_start = None
+        date_end = None
+        if date_col in df.columns and n > 0:
+            date_start = str(df[date_col].min())
+            date_end = str(df[date_col].max())
+
+        cols = []
+        for col in df.columns:
+            null_pct = round((df[col].null_count() / n) * 100, 1) if n > 0 else 0.0
+            cols.append(
+                {
+                    "name": col,
+                    "dtype": str(df.schema[col]),
+                    "null_pct": null_pct,
+                }
+            )
+
+        out[comp_name] = {
+            "component": comp_name,
+            "available": True,
+            "label": meta["label"],
+            "date_col": date_col,
+            "key_cols": meta["key_cols"],
+            "count_meaning": meta["count_meaning"],
+            "row_count": n,
+            "entity_count": int(df["entity_id"].n_unique()) if "entity_id" in df.columns and n > 0 else None,
+            "date_start": date_start,
+            "date_end": date_end,
+            "columns": cols,
+        }
+
+    return {"components": out}
+
+
+@router.get("/metrics-library")
+async def metrics_library():
+    """Return metric dictionaries and AI access mapping.
+
+    This is metadata-only: names, groups, and which system consumes each set.
+    """
+    # Derive metric keys directly from the live compute functions to avoid drift.
+    from src.ecs.tournament_system import _compute_metrics as tournament_compute_metrics
+    from src.alpha_lab.lab_backtester import _compute_metrics as alpha_lab_compute_metrics
+
+    sample_equity = np.array([10000.0, 10100.0, 10050.0, 10200.0], dtype=float)
+    sample_returns = np.array([0.01, -0.004950495, 0.014925373], dtype=float)
+
+    tournament_metrics = sorted(
+        list(tournament_compute_metrics(sample_equity, sample_returns).keys())
+    )
+    alpha_lab_metrics = sorted(
+        list(alpha_lab_compute_metrics(sample_equity, sample_returns).keys())
+    )
+
+    overlap = sorted(list(set(tournament_metrics).intersection(set(alpha_lab_metrics))))
+    tournament_only = sorted(list(set(tournament_metrics).difference(set(alpha_lab_metrics))))
+
+    return {
+        "metrics": {
+            "tournament_pipeline": {
+                "label": "Tournament / Strategy Studio Metrics",
+                "consumer": "Strategy Studio + /api/strategies/tournament",
+                "keys": tournament_metrics,
+            },
+            "alpha_lab_backtester": {
+                "label": "Alpha Lab Backtester Metrics",
+                "consumer": "Alpha Lab run_raw_backtest + experiment evaluation",
+                "keys": alpha_lab_metrics,
+            },
+            "forensic_audit": {
+                "label": "Forensic Auditor Verdict Fields",
+                "consumer": "Forensic AI audit classification",
+                "keys": [
+                    "status",
+                    "error_category",
+                    "error_subtype",
+                    "confidence",
+                    "flagged_trades",
+                    "recommendation",
+                ],
+            },
+        },
+        "access_matrix": {
+            "alpha_lab_generation_llm": {
+                "has_tournament_metrics": False,
+                "has_alpha_lab_metrics": False,
+                "notes": "Generation prompt uses data dictionary/statistical profile, not backtest metric payloads.",
+            },
+            "alpha_lab_evaluator": {
+                "has_tournament_metrics": False,
+                "has_alpha_lab_metrics": True,
+                "notes": "Alpha Lab pass/fail and experiment metric storage use lab_backtester metrics.",
+            },
+            "strategy_studio_tournament": {
+                "has_tournament_metrics": True,
+                "has_alpha_lab_metrics": False,
+                "notes": "Strategy Studio tournament endpoint returns expanded tournament metrics.",
+            },
+            "forensic_auditor_llm": {
+                "has_tournament_metrics": False,
+                "has_alpha_lab_metrics": False,
+                "notes": "Forensic system consumes trade evidence + strategy code and returns verdict taxonomy fields.",
+            },
+        },
+        "comparison": {
+            "shared_keys": overlap,
+            "tournament_only_keys": tournament_only,
+        },
+    }
 
 
 @router.get("/pipeline-coverage")
