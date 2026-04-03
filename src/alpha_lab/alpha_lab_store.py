@@ -24,6 +24,8 @@ TRADES_DIR = os.path.join(ALPHA_LAB_DIR, "trades")
 EXPERIMENTS_PATH = os.path.join(ALPHA_LAB_DIR, "experiments.parquet")
 
 TABLE = "alpha_lab_experiments"
+FAILED_TABLE = "alpha_lab_failed_generations"
+FAILED_PATH = os.path.join(ALPHA_LAB_DIR, "failed_generations.parquet")
 
 
 def _ensure_dirs():
@@ -76,6 +78,73 @@ def save_experiment(
         _parquet_save(record)
 
     return eid
+
+
+def save_failed_generation(
+    hypothesis: str,
+    strategy_code: str,
+    strategy_name: str,
+    model_tier: str,
+    rejection_reason: str,
+    source: str = "generate",
+    rationale: str = "",
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cost_usd: float = 0.0,
+) -> str:
+    """Persist a rejected generation with reason/cost for post-mortem review."""
+    failed_id = str(uuid.uuid4())[:8]
+    record = {
+        "failed_id": failed_id,
+        "hypothesis": hypothesis,
+        "strategy_code": strategy_code,
+        "strategy_name": strategy_name,
+        "model_tier": model_tier,
+        "rejection_reason": rejection_reason,
+        "source": source,
+        "rationale": rationale,
+        "cost_input_tokens": input_tokens,
+        "cost_output_tokens": output_tokens,
+        "cost_usd": cost_usd,
+        "created_at": datetime.utcnow().isoformat(),
+    }
+
+    sb = _use_supabase()
+    if sb:
+        try:
+            sb.table(FAILED_TABLE).insert(record).execute()
+        except Exception:
+            _parquet_save_failed(record)
+    else:
+        _parquet_save_failed(record)
+
+    return failed_id
+
+
+def list_failed_generations() -> list[dict]:
+    """Return rejected generations, newest first."""
+    sb = _use_supabase()
+    if sb:
+        try:
+            result = sb.table(FAILED_TABLE).select("*").order("created_at", desc=True).execute()
+            return result.data or []
+        except Exception:
+            return _parquet_list_failed()
+    return _parquet_list_failed()
+
+
+def delete_failed_generation(failed_id: str) -> bool:
+    """Delete a failed-generation record."""
+    sb = _use_supabase()
+    if sb:
+        try:
+            result = sb.table(FAILED_TABLE).delete().eq("failed_id", failed_id).execute()
+            deleted = len(result.data) > 0 if result.data else False
+            if deleted:
+                return True
+        except Exception:
+            pass
+    return _parquet_delete_failed(failed_id)
 
 
 def update_experiment_status(
@@ -300,6 +369,56 @@ def _parquet_delete(experiment_id: str) -> bool:
     if len(filtered) == len(df):
         return False
     filtered.write_parquet(EXPERIMENTS_PATH)
+    return True
+
+
+def _empty_failed_generations() -> pl.DataFrame:
+    return pl.DataFrame(
+        schema={
+            "failed_id": pl.Utf8,
+            "hypothesis": pl.Utf8,
+            "strategy_code": pl.Utf8,
+            "strategy_name": pl.Utf8,
+            "model_tier": pl.Utf8,
+            "rejection_reason": pl.Utf8,
+            "source": pl.Utf8,
+            "rationale": pl.Utf8,
+            "cost_input_tokens": pl.Int64,
+            "cost_output_tokens": pl.Int64,
+            "cost_usd": pl.Float64,
+            "created_at": pl.Utf8,
+        }
+    )
+
+
+def _parquet_save_failed(record: dict):
+    _ensure_dirs()
+    new_row = pl.DataFrame({k: [v] for k, v in record.items()})
+
+    if os.path.exists(FAILED_PATH):
+        existing = pl.read_parquet(FAILED_PATH)
+        combined = pl.concat([existing, new_row], how="diagonal_relaxed")
+    else:
+        combined = new_row
+
+    combined.write_parquet(FAILED_PATH)
+
+
+def _parquet_list_failed() -> list[dict]:
+    if not os.path.exists(FAILED_PATH):
+        return []
+    df = pl.read_parquet(FAILED_PATH).sort("created_at", descending=True)
+    return df.to_dicts()
+
+
+def _parquet_delete_failed(failed_id: str) -> bool:
+    if not os.path.exists(FAILED_PATH):
+        return False
+    df = pl.read_parquet(FAILED_PATH)
+    filtered = df.filter(pl.col("failed_id") != failed_id)
+    if len(filtered) == len(df):
+        return False
+    filtered.write_parquet(FAILED_PATH)
     return True
 
 

@@ -566,6 +566,7 @@ export interface AlphaEquityPoint {
 
 export interface AlphaGenerateResult {
   experiment_id?: string
+  failed_generation_id?: string
   strategy_name?: string
   rationale?: string
   code?: string
@@ -675,6 +676,33 @@ export async function fetchAlphaExperiment(experimentId: string): Promise<AlphaE
   const res = await fetch(`${API_BASE}/api/alpha-lab/${experimentId}`)
   if (!res.ok) return null
   return await res.json()
+}
+
+export interface FailedGeneration {
+  failed_id: string
+  hypothesis: string
+  strategy_code: string
+  strategy_name: string
+  model_tier: string
+  rejection_reason: string
+  source: string
+  rationale: string
+  cost_input_tokens: number
+  cost_output_tokens: number
+  cost_usd: number
+  created_at: string
+}
+
+export async function fetchFailedGenerations(): Promise<FailedGeneration[]> {
+  const res = await fetch(`${API_BASE}/api/alpha-lab/experiments/failed-generations`)
+  if (!res.ok) return []
+  return await res.json()
+}
+
+export async function deleteFailedGeneration(failedId: string): Promise<boolean> {
+  const res = await fetch(`${API_BASE}/api/alpha-lab/experiments/failed-generations/${failedId}`, { method: "DELETE" })
+  const data = await res.json()
+  return data.deleted === true
 }
 
 export async function deleteAlphaExperiment(experimentId: string): Promise<boolean> {

@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback, useRef } from "react"
 import {
   fetchAlphaExperiments,
   fetchAlphaExperiment,
+  fetchFailedGenerations,
+  deleteFailedGeneration,
   generateAlphaStrategy,
   getSwarmStreamUrl,
   saveSwarmResult,
@@ -18,6 +20,7 @@ import {
   getEditorSetting,
   saveEditorSetting,
   type AlphaExperiment,
+  type FailedGeneration,
   type AlphaEquityPoint,
 } from "@/lib/api"
 import Editor from "@monaco-editor/react"
@@ -59,7 +62,7 @@ const TIER_CONFIG = {
 } as const
 
 type TierKey = keyof typeof TIER_CONFIG
-type Tab = "generate" | "swarm" | "results" | "backtest"
+type Tab = "generate" | "swarm" | "results" | "failed" | "backtest"
 
 const DEFAULT_STANDALONE_CODE = `import polars as pl
 import numpy as np
@@ -148,6 +151,8 @@ function parseSwarmModelConfig(modelTier?: string): { researcher?: TierKey; risk
 export default function AlphaLab() {
   const [activeTab, setActiveTab] = useState<Tab>("generate")
   const [experiments, setExperiments] = useState<AlphaExperiment[]>([])
+  const [failedGenerations, setFailedGenerations] = useState<FailedGeneration[]>([])
+  const [selectedFailed, setSelectedFailed] = useState<FailedGeneration | null>(null)
   const [selectedExp, setSelectedExp] = useState<AlphaExperiment | null>(null)
   const [prompt, setPrompt] = useState("")
   const [selectedTier, setSelectedTier] = useState<TierKey>("sonnet")
@@ -199,9 +204,15 @@ export default function AlphaLab() {
     setExperiments(data)
   }, [])
 
+  const loadFailedGenerations = useCallback(async () => {
+    const data = await fetchFailedGenerations()
+    setFailedGenerations(data)
+  }, [])
+
   useEffect(() => {
     loadExperiments()
-  }, [loadExperiments])
+    loadFailedGenerations()
+  }, [loadExperiments, loadFailedGenerations])
 
   const handleSaveSwarmConfig = async () => {
     try {
@@ -220,6 +231,7 @@ export default function AlphaLab() {
       const result = await generateAlphaStrategy(prompt, selectedTier, strategyStyle)
       if (result.error) {
         setError(result.error)
+        await loadFailedGenerations()
       } else {
         setPrompt("")
         await loadExperiments()
@@ -286,6 +298,9 @@ export default function AlphaLab() {
             if (saved.experiment_id) {
               const exp = await fetchAlphaExperiment(saved.experiment_id)
               if (exp) { setSelectedExp(exp); setActiveTab("results") }
+            } else if (saved.error) {
+              setError(saved.error)
+              await loadFailedGenerations()
             }
           } else if (evt.type === "error") {
             setSwarmLogs(prev => [...prev, { agent: "system", label: `❌ ${evt.message}`, status: "error" }])
@@ -569,6 +584,23 @@ export default function AlphaLab() {
                 </span>
               )}
             </button>
+              <button
+                onClick={() => setActiveTab("failed")}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${
+                  activeTab === "failed"
+                    ? "bg-rose-600 text-white shadow-lg shadow-rose-500/20"
+                    : "text-zinc-400 hover:text-white"
+                }`}
+              >
+                ⛔ Failed Generations
+                {failedGenerations.length > 0 && (
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                    activeTab === "failed" ? "bg-white/20" : "bg-zinc-700"
+                  }`}>
+                    {failedGenerations.length}
+                  </span>
+                )}
+              </button>
           </div>
         </div>
 
@@ -693,6 +725,128 @@ export default function AlphaLab() {
           <div className="text-xs text-zinc-600 max-w-4xl">
             💡 Leave the prompt empty for the AI to generate a novel strategy from scratch, or describe specific
             signals/factors you want explored. After generation, you'll be switched to the Results tab to review and backtest.
+          </div>
+        </div>
+      )}
+
+      {/* ─── FAILED GENERATIONS TAB ───────────────────────── */}
+      {activeTab === "failed" && (
+        <div className="flex gap-5 flex-1 min-h-0">
+          <div className="w-[360px] flex-shrink-0 flex flex-col">
+            <h2 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider mb-3">
+              Failed Generations ({failedGenerations.length})
+            </h2>
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+              {failedGenerations.length === 0 && (
+                <div className="text-center py-12 text-zinc-500 text-sm">
+                  No failed generations recorded.
+                </div>
+              )}
+              {failedGenerations.map((fg) => {
+                const isSelected = selectedFailed?.failed_id === fg.failed_id
+                return (
+                  <button
+                    key={fg.failed_id}
+                    className={`w-full text-left p-3 rounded-lg border transition-all ${
+                      isSelected
+                        ? "border-rose-500 bg-rose-500/10"
+                        : "border-zinc-800 bg-zinc-900/50 hover:border-zinc-700"
+                    }`}
+                    onClick={() => setSelectedFailed(fg)}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="text-sm font-semibold text-white truncate">
+                        {fg.strategy_name || "Unnamed"}
+                      </div>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300">
+                        Rejected
+                      </span>
+                    </div>
+                    <div className="text-xs text-zinc-500 mt-1 line-clamp-2">{fg.rejection_reason}</div>
+                    <div className="flex items-center gap-3 mt-2 text-xs text-zinc-500">
+                      <span className="text-emerald-400">${(fg.cost_usd || 0).toFixed(4)}</span>
+                      <span>·</span>
+                      <span>{fg.source}</span>
+                      <span>·</span>
+                      <span>{fg.failed_id}</span>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0 flex flex-col">
+            {!selectedFailed ? (
+              <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
+                Select a failed generation to inspect details
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-xl font-bold text-white">{selectedFailed.strategy_name}</h2>
+                    <p className="text-sm text-zinc-400 mt-1">{selectedFailed.hypothesis}</p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      await deleteFailedGeneration(selectedFailed.failed_id)
+                      await loadFailedGenerations()
+                      setSelectedFailed(null)
+                    }}
+                    className="px-4 py-2 bg-zinc-800 hover:bg-red-500/20 text-zinc-400 hover:text-red-400 text-sm rounded-lg transition-colors border border-zinc-700"
+                  >
+                    🗑 Delete
+                  </button>
+                </div>
+
+                <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-4">
+                  <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider mb-3">Rejection Reason</h3>
+                  <div className="text-sm text-rose-300 whitespace-pre-wrap">{selectedFailed.rejection_reason}</div>
+                </div>
+
+                <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-4">
+                  <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider mb-3">Cost & Metadata</h3>
+                  <div className="grid grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <div className="text-xs text-zinc-500">Model</div>
+                      <div className="text-white font-semibold">{selectedFailed.model_tier}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-zinc-500">Input Tokens</div>
+                      <div className="text-white font-mono">{(selectedFailed.cost_input_tokens || 0).toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-zinc-500">Output Tokens</div>
+                      <div className="text-white font-mono">{(selectedFailed.cost_output_tokens || 0).toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-zinc-500">API Cost</div>
+                      <div className="text-emerald-400 font-semibold">${(selectedFailed.cost_usd || 0).toFixed(4)}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-4">
+                  <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider mb-3">Rejected Strategy Code</h3>
+                  <Editor
+                    height="420px"
+                    defaultLanguage="python"
+                    value={selectedFailed.strategy_code || ""}
+                    options={{
+                      readOnly: true,
+                      minimap: { enabled: false },
+                      fontSize: 13,
+                      wordWrap: "on",
+                      scrollBeyondLastLine: false,
+                      lineNumbers: "on",
+                      padding: { top: 10 },
+                    }}
+                    theme="vs-dark"
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

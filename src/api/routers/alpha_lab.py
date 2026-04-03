@@ -19,6 +19,9 @@ from typing import Optional, List, Dict, Any
 from src.alpha_lab.strategy_generator import generate_strategy, get_tier_info, combine_strategies
 from src.alpha_lab.alpha_lab_store import (
     save_experiment,
+    save_failed_generation,
+    list_failed_generations,
+    delete_failed_generation,
     list_experiments,
     get_experiment,
     delete_experiment,
@@ -136,7 +139,22 @@ async def generate_new_strategy(
     """Generate a new strategy hypothesis using a single LLM call (1-shot)."""
     try:
         hypothesis = generate_strategy(prompt=prompt, model_tier=model_tier, strategy_style=strategy_style)
-        _enforce_trade_activity_guardrail(hypothesis.code)
+        try:
+            _enforce_trade_activity_guardrail(hypothesis.code)
+        except ValueError as guardrail_err:
+            failed_id = save_failed_generation(
+                hypothesis=prompt or "(auto-generated)",
+                strategy_code=hypothesis.code,
+                strategy_name=hypothesis.name,
+                model_tier=model_tier,
+                rationale=hypothesis.rationale,
+                input_tokens=hypothesis.input_tokens,
+                output_tokens=hypothesis.output_tokens,
+                cost_usd=hypothesis.cost_usd,
+                rejection_reason=str(guardrail_err),
+                source="generate",
+            )
+            return _safe_response({"error": str(guardrail_err), "failed_generation_id": failed_id})
 
         # Save to store
         experiment_id = save_experiment(
@@ -178,7 +196,22 @@ async def generate_swarm_strategy(
     try:
         from src.alpha_lab.swarm_generator import generate_strategy_swarm
         hypothesis = generate_strategy_swarm(prompt=prompt, model_tier=model_tier, strategy_style=strategy_style)
-        _enforce_trade_activity_guardrail(hypothesis.code)
+        try:
+            _enforce_trade_activity_guardrail(hypothesis.code)
+        except ValueError as guardrail_err:
+            failed_id = save_failed_generation(
+                hypothesis=prompt or "(swarm-generated)",
+                strategy_code=hypothesis.code,
+                strategy_name=hypothesis.name,
+                model_tier=f"swarm/{model_tier}",
+                rationale=hypothesis.rationale,
+                input_tokens=hypothesis.input_tokens,
+                output_tokens=hypothesis.output_tokens,
+                cost_usd=hypothesis.cost_usd,
+                rejection_reason=str(guardrail_err),
+                source="generate-swarm",
+            )
+            return _safe_response({"error": str(guardrail_err), "failed_generation_id": failed_id})
 
         experiment_id = save_experiment(
             hypothesis=prompt or "(swarm-generated)",
@@ -269,7 +302,23 @@ class SwarmSaveRequest(BaseModel):
 @router.post("/generate-swarm-save")
 async def save_swarm_result(request: SwarmSaveRequest):
     """Save a completed swarm result. Called by the frontend after result event."""
-    _enforce_trade_activity_guardrail(request.code)
+    try:
+        _enforce_trade_activity_guardrail(request.code)
+    except ValueError as guardrail_err:
+        failed_id = save_failed_generation(
+            hypothesis=request.hypothesis or "(swarm-generated)",
+            strategy_code=request.code,
+            strategy_name=request.name,
+            model_tier=f"swarm/{request.model_tier}",
+            rationale=request.rationale,
+            input_tokens=request.input_tokens,
+            output_tokens=request.output_tokens,
+            cost_usd=request.cost_usd,
+            rejection_reason=str(guardrail_err),
+            source="generate-swarm-save",
+        )
+        return _safe_response({"error": str(guardrail_err), "failed_generation_id": failed_id})
+
     experiment_id = save_experiment(
         hypothesis=request.hypothesis or "(swarm-generated)",
         strategy_code=request.code,
@@ -429,6 +478,20 @@ async def get_experiment_detail(experiment_id: str):
 async def delete_experiment_endpoint(experiment_id: str):
     """Delete an experiment and its data."""
     success = delete_experiment(experiment_id)
+    return _safe_response({"deleted": success})
+
+
+@router.get("/experiments/failed-generations")
+async def list_failed_generations_endpoint():
+    """List rejected generations (e.g., no-trade guardrail failures)."""
+    rows = list_failed_generations()
+    return _safe_response(rows)
+
+
+@router.delete("/experiments/failed-generations/{failed_id}")
+async def delete_failed_generation_endpoint(failed_id: str):
+    """Delete a failed-generation record."""
+    success = delete_failed_generation(failed_id)
     return _safe_response({"deleted": success})
 
 
