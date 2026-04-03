@@ -75,6 +75,35 @@ def _safe_response(data):
     return JSONResponse(content=_sanitize(data))
 
 
+def _enforce_trade_activity_guardrail(strategy_code: str, min_trades: int = 1) -> None:
+    """Runtime guardrail: generated strategies must produce real trade activity."""
+    result = run_raw_backtest(
+        strategy_code=strategy_code,
+        starting_capital=10000.0,
+        enable_self_healing=False,
+    )
+
+    if "error" in result:
+        error_msg = str(result.get("error") or "Unknown backtest error")
+        if "no active positions" in error_msg.lower():
+            raise ValueError(
+                "Runtime Guardrail Violation [G6]: Generated strategy produced zero active positions "
+                "(no trades). Strategy rejected."
+            )
+        raise ValueError(
+            "Runtime Guardrail Violation [G6]: Generated strategy failed sandbox backtest "
+            f"before save: {error_msg}"
+        )
+
+    ledger = result.get("_trade_ledger")
+    trade_count = 0 if ledger is None else len(ledger)
+    if trade_count < min_trades:
+        raise ValueError(
+            "Runtime Guardrail Violation [G6]: Generated strategy produced insufficient trade "
+            f"activity ({trade_count} trades, minimum {min_trades}). Strategy rejected."
+        )
+
+
 @router.get("/aligned-profile")
 async def get_aligned_profile():
     """Serves the semantic dictionary and statistical distribution of the feature store.
@@ -107,6 +136,7 @@ async def generate_new_strategy(
     """Generate a new strategy hypothesis using a single LLM call (1-shot)."""
     try:
         hypothesis = generate_strategy(prompt=prompt, model_tier=model_tier, strategy_style=strategy_style)
+        _enforce_trade_activity_guardrail(hypothesis.code)
 
         # Save to store
         experiment_id = save_experiment(
@@ -148,6 +178,7 @@ async def generate_swarm_strategy(
     try:
         from src.alpha_lab.swarm_generator import generate_strategy_swarm
         hypothesis = generate_strategy_swarm(prompt=prompt, model_tier=model_tier, strategy_style=strategy_style)
+        _enforce_trade_activity_guardrail(hypothesis.code)
 
         experiment_id = save_experiment(
             hypothesis=prompt or "(swarm-generated)",
@@ -238,6 +269,7 @@ class SwarmSaveRequest(BaseModel):
 @router.post("/generate-swarm-save")
 async def save_swarm_result(request: SwarmSaveRequest):
     """Save a completed swarm result. Called by the frontend after result event."""
+    _enforce_trade_activity_guardrail(request.code)
     experiment_id = save_experiment(
         hypothesis=request.hypothesis or "(swarm-generated)",
         strategy_code=request.code,
