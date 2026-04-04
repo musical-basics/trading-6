@@ -1,0 +1,55 @@
+{
+  "output": {
+    "filePath": "repomix-output.xml",
+    "style": "xml",
+    "compress": false,
+    "headerText": "trading-6 — Full-stack algorithmic trading system (FastAPI backend + Next.js frontend)",
+    "instructionFilePath": "",
+    "includeEmptyDirectories": false,
+    "showLineNumbers": true,
+    "removeComments": false,
+    "removeEmptyLines": false,
+    "copyToClipboard": false
+  },
+  "include": [
+    "**/*"
+  ],
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "**/__pycache__/**",
+      "**/*.pyc",
+      "**/*.pyo",
+      "**/.DS_Store",
+      "**/node_modules/**",
+      "**/.next/**",
+      "**/.venv/**",
+      "**/pnpm-lock.yaml",
+      "**/package-lock.json",
+      "**/*.tsbuildinfo",
+      "**/tsconfig.tsbuildinfo",
+      "**/*.duckdb",
+      "**/*.duckdb.wal",
+      "**/*.db",
+      "**/api.log",
+      "**/data/**",
+      "frontend/public/**",
+      "frontend/styles/**",
+      "frontend/components/ui/**",
+      "src/scripts/**",
+      "src/core/migrate_sqlite_to_parquet.py",
+      "src/pipeline/data_sources/edgar/**",
+      "src/pipeline/data_sources/eodhd/**",
+      "src/pipeline/data_sources/fmp/**",
+      "src/pipeline/data_sources/polygon/**",
+      "src/pipeline/data_sources/tiingo/**",
+      "src/pipeline/data_sources/yfinance/**",
+      "src/ecs/strategies/custom/**",
+      "**/.git/**"
+    ]
+  },
+  "security": {
+    "enableSecurityCheck": true
+  }
+}
