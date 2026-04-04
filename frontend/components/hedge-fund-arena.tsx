@@ -269,9 +269,10 @@ export function HedgeFundArena() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [logOffset, setLogOffset] = useState(0)
   const [tickResult, setTickResult] = useState<TickResult | null>(null)
-  // currentTickCost resets each run; cumulativeCost accumulates across all ticks this session
+  // allTimeCost: fetched from backend Parquet ledger — persists across all sessions/refreshes
+  const [allTimeCost, setAllTimeCost] = useState(0)
+  // currentTickCost: live per-tick cost, resets on each Run Tick
   const [currentTickCost, setCurrentTickCost] = useState(0)
-  const [cumulativeCost, setCumulativeCost] = useState(0)
   const [elapsedSec, setElapsedSec] = useState(0)
 
   const pollRef    = useRef<NodeJS.Timeout | null>(null)
@@ -280,12 +281,27 @@ export function HedgeFundArena() {
   const logsEndRef = useRef<HTMLDivElement>(null)
   const logOffsetRef = useRef(0)  // stable ref so intervals don't stale-close
 
-  // ── Load traders + models on mount ──────────────────────────
+  // ── Fetch all-time cost from backend ledger ──────────────────
+  const fetchAllTimeCost = useCallback(async (id: number) => {
+    try {
+      const r = await fetch(`${API}/api/arena/costs/${id}`)
+      const data = await r.json()
+      // Backend returns { total_cost_usd: float, ... }
+      if (typeof data?.total_cost_usd === "number") {
+        setAllTimeCost(data.total_cost_usd)
+      }
+    } catch { /* silently fail — backend may not have ledger yet */ }
+  }, [])
+
+  // ── Load traders + models on mount ────────────────────────────
   useEffect(() => {
     fetch(`${API}/api/traders`)
       .then(r => r.json())
       .then(data => { if (Array.isArray(data)) setTraders(data) })
       .catch(() => {})
+
+    // Load all-time cost for the initially-selected trader
+    fetchAllTimeCost(traderId)
 
     fetch(`${API}/api/arena/models`)
       .then(r => r.json())
@@ -307,7 +323,12 @@ export function HedgeFundArena() {
         setSelectedCommanderModel(fallback[0].id)
         setSelectedWorkerModel(fallback[1].id)
       })
-  }, [])
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-fetch all-time cost when trader selection changes
+  useEffect(() => {
+    fetchAllTimeCost(traderId)
+  }, [traderId, fetchAllTimeCost])
 
   // ── Auto-scroll logs ─────────────────────────────────────────
   useEffect(() => {
@@ -317,7 +338,7 @@ export function HedgeFundArena() {
   // ── Cleanup ──────────────────────────────────────────────────
   useEffect(() => {
     return () => { stopAllPolling() }
-  }, [])
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const stopAllPolling = () => {
     if (pollRef.current)    { clearInterval(pollRef.current);    pollRef.current    = null }
@@ -383,12 +404,12 @@ export function HedgeFundArena() {
             setTickResult(result)
             const finalCost = result.api_cost_deducted_usd || result.total_token_cost?.estimated_cost_usd || 0
             setCurrentTickCost(finalCost)
-            // Accumulate into session total (never resets)
-            setCumulativeCost(prev => prev + finalCost)
             setElapsedSec(result.elapsed_seconds)
             setAgents(prev => prev.map(a =>
               a.status !== "error" ? { ...a, status: "complete" as AgentStatus } : a
             ))
+            // Refresh all-time cost from ledger after tick settles
+            setTimeout(() => fetchAllTimeCost(traderId), 1500)
           }
         } else if (data.status === "error") {
           stopAllPolling()
@@ -590,14 +611,16 @@ export function HedgeFundArena() {
 
         <div className="flex-1" />
 
-        {/* API Cost — this tick + persistent session total */}
+        {/* API Cost — all-time persistent (from ledger) + live this-tick */}
         <div className="flex flex-col gap-1 items-end">
           <label className="text-[10px] text-muted-foreground uppercase tracking-wider">API Cost</label>
           <div className="flex flex-col items-end gap-0.5">
-            <LiveCostBadge total={currentTickCost} live={isRunning} />
-            {cumulativeCost > 0 && (
+            {/* Main badge: all-time total from Parquet ledger — persists across refreshes */}
+            <LiveCostBadge total={allTimeCost + (isRunning ? currentTickCost : 0)} live={isRunning} />
+            {/* Sub-line: this tick only, shown live and after completion */}
+            {(isRunning || tickStatus === "complete") && currentTickCost > 0 && (
               <span className="text-[10px] text-muted-foreground/60 font-mono tabular-nums">
-                session ${cumulativeCost.toFixed(5)}
+                this tick ${currentTickCost.toFixed(5)}
               </span>
             )}
           </div>
