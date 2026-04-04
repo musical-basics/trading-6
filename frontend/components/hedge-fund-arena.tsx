@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import {
-  Bot, Brain, Shield, DollarSign, Play, Pause, RefreshCw,
-  ChevronDown, ChevronRight, CheckCircle2, Clock, AlertCircle,
-  Loader2, Zap, TrendingUp, TrendingDown, Users, BarChart2,
+  Bot, Brain, Shield, DollarSign, Play, Square, RefreshCw,
+  ChevronDown, CheckCircle2, Clock, AlertCircle,
+  Loader2, Zap, TrendingUp, BarChart2,
   Activity, Cpu, ArrowRight, Terminal as TerminalIcon,
-  Sparkles, Target
+  Sparkles, Target, XCircle
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -14,7 +14,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 
 // ─── Types ───────────────────────────────────────────────────
-type TickStatus = "idle" | "running" | "complete" | "error"
+type TickStatus = "idle" | "running" | "complete" | "error" | "cancelled"
 type AgentStatus = "pending" | "running" | "complete" | "error"
 type Phase = "data_fetch" | "consultants" | "commander" | "desks" | "back_office" | "done"
 
@@ -28,8 +28,6 @@ interface AgentCard {
   outputTokens?: number
   costUsd?: number
   strategy?: string
-  confidence?: number
-  elapsedMs?: number
 }
 
 interface LogEntry {
@@ -79,22 +77,69 @@ interface ModelOption {
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
+// ─── Parse event data out of a log message string ────────────
+// Backend logs: "arena.agent_completed: {'agent_name': 'scout', 'tokens': {'input': 234, 'output': 76}, 'cost_usd': 0.00642}"
+// We extract structured info without eval by regex-matching the key fields.
+function parseLogEvent(msg: string): { type: string; data: Record<string, unknown> } | null {
+  const typeMatch = msg.match(/^(arena\.\w+):/)
+  if (!typeMatch) return null
+  const type = typeMatch[1]
+
+  // Extract agent_name
+  const agentMatch = msg.match(/'agent_name':\s*'([^']+)'/)
+  const agentName = agentMatch ? agentMatch[1] : ""
+
+  // Extract cost_usd (float)
+  const costMatch = msg.match(/'cost_usd':\s*([\d.]+)/)
+  const costUsd = costMatch ? parseFloat(costMatch[1]) : undefined
+
+  // Extract tokens
+  const inputMatch = msg.match(/'input':\s*(\d+)/)
+  const outputMatch = msg.match(/'output':\s*(\d+)/)
+  const inputTokens = inputMatch ? parseInt(inputMatch[1]) : undefined
+  const outputTokens = outputMatch ? parseInt(outputMatch[1]) : undefined
+
+  // Extract strategy (for strategist completions)
+  const strategyMatch = msg.match(/'strategy':\s*'([^']+)'/)
+  const strategy = strategyMatch ? strategyMatch[1] : undefined
+
+  // Extract phase
+  const phaseMatch = msg.match(/'phase':\s*'([^']+)'/)
+  const phase = phaseMatch ? phaseMatch[1] : undefined
+
+  // Extract phase_name
+  const phaseNameMatch = msg.match(/'phase_name':\s*'([^']+)'/)
+  const phaseName = phaseNameMatch ? phaseNameMatch[1] : undefined
+
+  return {
+    type,
+    data: {
+      agent_name: agentName,
+      cost_usd: costUsd,
+      tokens: inputTokens !== undefined ? { input: inputTokens, output: outputTokens } : undefined,
+      strategy,
+      phase,
+      phase_name: phaseName,
+    },
+  }
+}
+
 // ─── Agent DAG Definition ─────────────────────────────────────
 const INITIAL_AGENTS: AgentCard[] = [
-  { id: "consultant", label: "Market Consultant", role: "consultant", status: "pending" },
-  { id: "auditor",    label: "Data Auditor",      role: "auditor",    status: "pending" },
-  { id: "scout",      label: "Intel Scout",       role: "scout",      status: "pending" },
-  { id: "commander",  label: "Commander (CEO)",   role: "commander",  status: "pending" },
-  { id: "analyst_d1",   label: "Analyst",    role: "analyst",    desk: 1, status: "pending" },
-  { id: "strategist_d1",label: "Strategist", role: "strategist", desk: 1, status: "pending" },
-  { id: "pm_d1",        label: "PM",         role: "pm",         desk: 1, status: "pending" },
-  { id: "analyst_d2",   label: "Analyst",    role: "analyst",    desk: 2, status: "pending" },
-  { id: "strategist_d2",label: "Strategist", role: "strategist", desk: 2, status: "pending" },
-  { id: "pm_d2",        label: "PM",         role: "pm",         desk: 2, status: "pending" },
-  { id: "analyst_d3",   label: "Analyst",    role: "analyst",    desk: 3, status: "pending" },
-  { id: "strategist_d3",label: "Strategist", role: "strategist", desk: 3, status: "pending" },
-  { id: "pm_d3",        label: "PM",         role: "pm",         desk: 3, status: "pending" },
-  { id: "back_office",  label: "Back Office", role: "back_office", status: "pending" },
+  { id: "consultant",    label: "Market Consultant", role: "consultant",  status: "pending" },
+  { id: "auditor",       label: "Data Auditor",      role: "auditor",     status: "pending" },
+  { id: "scout",         label: "Intel Scout",       role: "scout",       status: "pending" },
+  { id: "commander",     label: "Commander (CEO)",   role: "commander",   status: "pending" },
+  { id: "analyst_d1",    label: "Analyst",           role: "analyst",     desk: 1, status: "pending" },
+  { id: "strategist_d1", label: "Strategist",        role: "strategist",  desk: 1, status: "pending" },
+  { id: "pm_d1",         label: "PM",                role: "pm",          desk: 1, status: "pending" },
+  { id: "analyst_d2",    label: "Analyst",           role: "analyst",     desk: 2, status: "pending" },
+  { id: "strategist_d2", label: "Strategist",        role: "strategist",  desk: 2, status: "pending" },
+  { id: "pm_d2",         label: "PM",                role: "pm",          desk: 2, status: "pending" },
+  { id: "analyst_d3",    label: "Analyst",           role: "analyst",     desk: 3, status: "pending" },
+  { id: "strategist_d3", label: "Strategist",        role: "strategist",  desk: 3, status: "pending" },
+  { id: "pm_d3",         label: "PM",                role: "pm",          desk: 3, status: "pending" },
+  { id: "back_office",   label: "Back Office",       role: "back_office", status: "pending" },
 ]
 
 const ROLE_ICON: Record<AgentCard["role"], React.ElementType> = {
@@ -127,32 +172,32 @@ function AgentPill({ agent }: { agent: AgentCard }) {
 
   return (
     <div className={cn(
-      "relative flex flex-col gap-1 p-3 rounded-lg border transition-all duration-300",
-      agent.status === "pending"  && "border-border/40 bg-card/30 opacity-60",
-      agent.status === "running"  && "border-primary/60 bg-primary/5 shadow-[0_0_12px_rgba(99,102,241,0.15)] animate-pulse",
-      agent.status === "complete" && "border-emerald-500/40 bg-emerald-500/5",
-      agent.status === "error"    && "border-red-500/40 bg-red-500/5",
+      "flex flex-col gap-1 p-2.5 rounded-lg border transition-all duration-300",
+      agent.status === "pending"  && "border-border/30 bg-card/20 opacity-50",
+      agent.status === "running"  && "border-primary/60 bg-primary/5 shadow-[0_0_10px_rgba(99,102,241,0.15)] animate-pulse",
+      agent.status === "complete" && "border-emerald-500/30 bg-emerald-500/5",
+      agent.status === "error"    && "border-red-500/30 bg-red-500/5",
     )}>
       <div className="flex items-center gap-2">
-        <div className={cn("p-1 rounded", colorClass)}>
+        <div className={cn("p-1 rounded shrink-0", colorClass)}>
           <Icon className="w-3 h-3" />
         </div>
-        <span className="text-xs font-medium text-foreground">{agent.label}</span>
-        <div className="ml-auto">
-          {agent.status === "pending"  && <Clock className="w-3 h-3 text-muted-foreground/50" />}
+        <span className="text-[11px] font-medium text-foreground truncate">{agent.label}</span>
+        <div className="ml-auto shrink-0">
+          {agent.status === "pending"  && <Clock className="w-3 h-3 text-muted-foreground/40" />}
           {agent.status === "running"  && <Loader2 className="w-3 h-3 text-primary animate-spin" />}
           {agent.status === "complete" && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
           {agent.status === "error"    && <AlertCircle className="w-3 h-3 text-red-400" />}
         </div>
       </div>
       {agent.status === "complete" && agent.costUsd !== undefined && (
-        <div className="flex items-center gap-2 pt-0.5 border-t border-border/20">
-          <span className="text-[10px] text-muted-foreground">
-            {(agent.inputTokens || 0) + (agent.outputTokens || 0)} tok
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px] text-muted-foreground tabular-nums">
+            {((agent.inputTokens || 0) + (agent.outputTokens || 0)).toLocaleString()} tok
           </span>
-          <span className="text-[10px] text-amber-400">${agent.costUsd.toFixed(5)}</span>
+          <span className="text-[10px] text-amber-400 font-mono tabular-nums">${agent.costUsd.toFixed(5)}</span>
           {agent.strategy && (
-            <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-violet-500/30 text-violet-300">
+            <Badge variant="outline" className="text-[9px] px-1 h-4 border-violet-500/30 text-violet-300">
               {agent.strategy}
             </Badge>
           )}
@@ -168,23 +213,42 @@ function PhaseLabel({ label, active, done }: { label: string; active: boolean; d
       "flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest px-2 py-1 rounded",
       active && "text-primary bg-primary/10",
       done && "text-emerald-400",
-      !active && !done && "text-muted-foreground/50",
+      !active && !done && "text-muted-foreground/40",
     )}>
-      {done ? <CheckCircle2 className="w-3 h-3" /> : active ? <Zap className="w-3 h-3 animate-pulse" /> : <div className="w-3 h-3 rounded-full border border-current opacity-40" />}
+      {done
+        ? <CheckCircle2 className="w-3 h-3 shrink-0" />
+        : active
+        ? <Zap className="w-3 h-3 shrink-0 animate-pulse" />
+        : <div className="w-3 h-3 rounded-full border border-current opacity-40 shrink-0" />
+      }
       {label}
     </div>
   )
 }
 
-function CostTicker({ total, ticking }: { total: number; ticking: boolean }) {
+// ─── Live animating cost counter ─────────────────────────────
+function LiveCostBadge({ total, live }: { total: number; live: boolean }) {
+  const prevRef = useRef(total)
+  const [flash, setFlash] = useState(false)
+
+  useEffect(() => {
+    if (total !== prevRef.current) {
+      prevRef.current = total
+      setFlash(true)
+      const t = setTimeout(() => setFlash(false), 600)
+      return () => clearTimeout(t)
+    }
+  }, [total])
+
   return (
     <div className={cn(
-      "flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-mono tabular-nums",
-      ticking ? "border-amber-500/40 bg-amber-500/5 text-amber-300" : "border-border/30 text-muted-foreground"
+      "flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-mono tabular-nums transition-colors duration-300",
+      live ? "border-amber-500/50 bg-amber-500/8 text-amber-300" : "border-border/30 bg-card/30 text-muted-foreground",
+      flash && "border-amber-400 bg-amber-400/15 text-amber-200",
     )}>
-      <DollarSign className="w-3.5 h-3.5" />
+      <DollarSign className="w-3.5 h-3.5 shrink-0" />
       <span>${total.toFixed(5)}</span>
-      {ticking && <span className="text-[10px] text-amber-400/60">live</span>}
+      {live && <span className="text-[10px] text-amber-500 animate-pulse">live</span>}
     </div>
   )
 }
@@ -208,18 +272,17 @@ export function HedgeFundArena() {
   const [totalCost, setTotalCost] = useState(0)
   const [elapsedSec, setElapsedSec] = useState(0)
 
-  const pollRef = useRef<NodeJS.Timeout | null>(null)
+  const pollRef    = useRef<NodeJS.Timeout | null>(null)
   const logPollRef = useRef<NodeJS.Timeout | null>(null)
-  const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const timerRef   = useRef<NodeJS.Timeout | null>(null)
   const logsEndRef = useRef<HTMLDivElement>(null)
+  const logOffsetRef = useRef(0)  // stable ref so intervals don't stale-close
 
   // ── Load traders + models on mount ──────────────────────────
   useEffect(() => {
     fetch(`${API}/api/traders`)
       .then(r => r.json())
-      .then(data => {
-        if (Array.isArray(data)) setTraders(data)
-      })
+      .then(data => { if (Array.isArray(data)) setTraders(data) })
       .catch(() => {})
 
     fetch(`${API}/api/arena/models`)
@@ -227,17 +290,16 @@ export function HedgeFundArena() {
       .then(data => {
         const modelList: ModelOption[] = data?.models || []
         setModels(modelList)
-        const opus = modelList.find(m => m.tier.includes("Opus"))
+        const opus   = modelList.find(m => m.tier.includes("Opus"))
         const sonnet = modelList.find(m => m.tier.includes("Sonnet"))
-        if (opus) setSelectedCommanderModel(opus.id)
+        if (opus)   setSelectedCommanderModel(opus.id)
         if (sonnet) setSelectedWorkerModel(sonnet.id)
       })
       .catch(() => {
-        // Fallback models
         const fallback: ModelOption[] = [
-          { id: "claude-opus-4-6-20251001",  display_name: "Claude Opus 4.6",  tier: "Opus (Most Capable)",  default_role: "commander" },
-          { id: "claude-sonnet-4-6-20251001",display_name: "Claude Sonnet 4.6",tier: "Sonnet (Balanced)",     default_role: "strategist" },
-          { id: "claude-haiku-4-5-20251001", display_name: "Claude Haiku 4.5", tier: "Haiku (Fastest)",       default_role: "analyst" },
+          { id: "claude-opus-4-6-20251001",   display_name: "Claude Opus 4.6",   tier: "Opus (Most Capable)", default_role: "commander" },
+          { id: "claude-sonnet-4-6-20251001", display_name: "Claude Sonnet 4.6", tier: "Sonnet (Balanced)",    default_role: "strategist" },
+          { id: "claude-haiku-4-5-20251001",  display_name: "Claude Haiku 4.5",  tier: "Haiku (Fastest)",     default_role: "analyst" },
         ]
         setModels(fallback)
         setSelectedCommanderModel(fallback[0].id)
@@ -245,123 +307,145 @@ export function HedgeFundArena() {
       })
   }, [])
 
-  // ── Scroll logs to bottom ────────────────────────────────────
+  // ── Auto-scroll logs ─────────────────────────────────────────
   useEffect(() => {
-    if (logsEndRef.current) {
-      logsEndRef.current.scrollIntoView({ behavior: "smooth" })
-    }
+    logsEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [logs])
 
-  // ── Cleanup on unmount ───────────────────────────────────────
+  // ── Cleanup ──────────────────────────────────────────────────
   useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
-      if (logPollRef.current) clearInterval(logPollRef.current)
-      if (timerRef.current) clearInterval(timerRef.current)
+    return () => { stopAllPolling() }
+  }, [])
+
+  const stopAllPolling = () => {
+    if (pollRef.current)    { clearInterval(pollRef.current);    pollRef.current    = null }
+    if (logPollRef.current) { clearInterval(logPollRef.current); logPollRef.current = null }
+    if (timerRef.current)   { clearInterval(timerRef.current);   timerRef.current   = null }
+  }
+
+  // ── Parse a log entry for agent events → update UI ──────────
+  // This is how we get LIVE cost + status updates without a WebSocket.
+  // The backend logs emit "arena.agent_completed: {...}" on every agent call.
+  const processNewLogs = useCallback((newEntries: LogEntry[]) => {
+    for (const entry of newEntries) {
+      const parsed = parseLogEvent(entry.msg)
+      if (!parsed) continue
+
+      const { type, data } = parsed
+      const agentName = data.agent_name as string
+
+      if (type === "arena.agent_started" && agentName) {
+        if (data.phase) setCurrentPhase(data.phase as Phase)
+        setAgents(prev => prev.map(a =>
+          a.id === agentName ? { ...a, status: "running" as AgentStatus } : a
+        ))
+      } else if (type === "arena.agent_completed" && agentName) {
+        const cost = data.cost_usd as number | undefined
+        const tokens = data.tokens as { input: number; output: number } | undefined
+        setAgents(prev => prev.map(a =>
+          a.id === agentName ? {
+            ...a,
+            status: "complete" as AgentStatus,
+            inputTokens: tokens?.input,
+            outputTokens: tokens?.output,
+            costUsd: cost,
+            strategy: data.strategy as string | undefined,
+          } : a
+        ))
+        // ← THE FIX: accumulate cost here from log events
+        if (cost) setTotalCost(prev => prev + cost)
+      } else if (type === "arena.phase_completed") {
+        const phaseName = (data.phase_name || data.phase) as string
+        if (phaseName) setCurrentPhase(phaseName as Phase)
+      } else if (type === "arena.tick_completed") {
+        setCurrentPhase("done")
+      }
     }
   }, [])
 
-  // ── Apply event updates to agent cards ──────────────────────
-  const applyEvent = useCallback((type: string, data: Record<string, unknown>) => {
-    if (type === "arena.agent_started") {
-      const agentName = data.agent_name as string
-      const phase = data.phase as string
-      setCurrentPhase(phase as Phase)
-      setAgents(prev => prev.map(a =>
-        a.id === agentName ? { ...a, status: "running" } : a
-      ))
-    } else if (type === "arena.agent_completed") {
-      const agentName = data.agent_name as string
-      const tokens = data.tokens as {input: number; output: number} | undefined
-      setAgents(prev => prev.map(a =>
-        a.id === agentName ? {
-          ...a,
-          status: "complete",
-          inputTokens: tokens?.input,
-          outputTokens: tokens?.output,
-          costUsd: data.cost_usd as number,
-          strategy: data.strategy as string | undefined,
-        } : a
-      ))
-      setTotalCost(prev => prev + ((data.cost_usd as number) || 0))
-    } else if (type === "arena.phase_completed") {
-      const phase = data.phase_name as string
-      setCurrentPhase(phase as Phase)
-    } else if (type === "arena.tick_completed") {
-      setCurrentPhase("done")
-      setTickStatus("complete")
-    }
-  }, [])
-
-  // ── Poll tick status ─────────────────────────────────────────
-  const pollStatus = useCallback((id: string) => {
+  // ── Status polling ───────────────────────────────────────────
+  const startStatusPolling = useCallback((id: string) => {
     pollRef.current = setInterval(async () => {
       try {
         const r = await fetch(`${API}/api/arena/tick/${id}/status`)
         const data = await r.json()
 
-        if (data.current_agent) {
-          setAgents(prev => prev.map(a =>
-            a.id === data.current_agent ? { ...a, status: "running" } :
-            data.completed_agents?.includes(a.id) ? { ...a, status: "complete" } : a
-          ))
-        }
-        if (data.phase) setCurrentPhase(data.phase as Phase)
         if (data.elapsed_seconds) setElapsedSec(data.elapsed_seconds)
 
         if (data.status === "complete") {
-          clearInterval(pollRef.current!)
-          if (timerRef.current) clearInterval(timerRef.current!)
+          stopAllPolling()
           setTickStatus("complete")
           setCurrentPhase("done")
           if (data.result) {
             const result = data.result as TickResult
             setTickResult(result)
+            // Use final server cost as source of truth (overrides running total)
             setTotalCost(result.api_cost_deducted_usd || result.total_token_cost?.estimated_cost_usd || 0)
-            // Mark all agents complete
-            setAgents(prev => prev.map(a => ({ ...a, status: "complete" as AgentStatus })))
+            setElapsedSec(result.elapsed_seconds)
+            setAgents(prev => prev.map(a =>
+              a.status !== "error" ? { ...a, status: "complete" as AgentStatus } : a
+            ))
           }
         } else if (data.status === "error") {
-          clearInterval(pollRef.current!)
-          if (timerRef.current) clearInterval(timerRef.current!)
+          stopAllPolling()
           setTickStatus("error")
+        } else if (data.status === "cancelled") {
+          stopAllPolling()
+          setTickStatus("cancelled")
         }
-      } catch {}
-    }, 1000)
+      } catch { /* network hiccup — retry next interval */ }
+    }, 1500)
   }, [])
 
-  // ── Poll logs ────────────────────────────────────────────────
-  const pollLogs = useCallback(() => {
+  // ── Log polling — drives live cost + agent status updates ────
+  const startLogPolling = useCallback(() => {
     logPollRef.current = setInterval(async () => {
       try {
-        const r = await fetch(`${API}/api/arena/logs?since=${logOffset}`)
+        const r = await fetch(`${API}/api/arena/logs?since=${logOffsetRef.current}`)
         const data = await r.json()
-        if (data.logs?.length) {
-          setLogs(prev => [...prev, ...data.logs])
-          setLogOffset(prev => prev + data.logs.length)
-        }
-        if (!data.running && tickStatus !== "running") {
-          clearInterval(logPollRef.current!)
-        }
-      } catch {}
-    }, 800)
-  }, [logOffset, tickStatus])
 
-  // ── Start a tick ─────────────────────────────────────────────
+        if (data.logs?.length) {
+          const newEntries = data.logs as LogEntry[]
+          setLogs(prev => [...prev, ...newEntries])
+          logOffsetRef.current += newEntries.length
+          setLogOffset(logOffsetRef.current)
+          // Drive live UI updates from parsed log events
+          processNewLogs(newEntries)
+        }
+      } catch { /* retry next interval */ }
+    }, 600)  // faster poll = more live feel
+  }, [processNewLogs])
+
+  // ── Cancel a running tick ────────────────────────────────────
+  const handleCancelTick = async () => {
+    if (!tickId || tickStatus !== "running") return
+    try {
+      await fetch(`${API}/api/arena/tick/${tickId}`, { method: "DELETE" })
+    } catch { /* ignore */ }
+    stopAllPolling()
+    setTickStatus("cancelled")
+    setAgents(prev => prev.map(a =>
+      a.status === "running" ? { ...a, status: "pending" as AgentStatus } : a
+    ))
+  }
+
+  // ── Run a tick ───────────────────────────────────────────────
   const handleRunTick = async () => {
     if (tickStatus === "running") return
 
-    // Reset state
+    // Reset
     setTickStatus("running")
     setTickResult(null)
     setTotalCost(0)
     setElapsedSec(0)
     setLogs([])
     setLogOffset(0)
+    logOffsetRef.current = 0
     setCurrentPhase("data_fetch")
     setAgents(INITIAL_AGENTS.map(a => ({ ...a, status: "pending" })))
+    stopAllPolling()
 
-    // Start elapsed timer
+    // Elapsed counter (visual only, status poll provides authoritative value)
     const startTime = Date.now()
     timerRef.current = setInterval(() => {
       setElapsedSec((Date.now() - startTime) / 1000)
@@ -372,6 +456,8 @@ export function HedgeFundArena() {
     if (selectedWorkerModel) {
       modelOverrides["strategist"] = selectedWorkerModel
       modelOverrides["consultant"] = selectedWorkerModel
+      modelOverrides["analyst"]    = selectedWorkerModel
+      modelOverrides["pm"]         = selectedWorkerModel
     }
 
     try {
@@ -383,46 +469,45 @@ export function HedgeFundArena() {
       const data = await r.json()
       if (data.tick_id) {
         setTickId(data.tick_id)
-        pollStatus(data.tick_id)
-        pollLogs()
+        startStatusPolling(data.tick_id)
+        startLogPolling()
       } else {
+        stopAllPolling()
         setTickStatus("error")
       }
-    } catch (e) {
+    } catch {
+      stopAllPolling()
       setTickStatus("error")
-      if (timerRef.current) clearInterval(timerRef.current)
     }
   }
 
-  // ── Computed phase visibility ────────────────────────────────
+  // ─── Phase helpers ────────────────────────────────────────────
   const phaseOrder: Phase[] = ["data_fetch", "consultants", "commander", "desks", "back_office", "done"]
   const phaseIndex = currentPhase ? phaseOrder.indexOf(currentPhase) : -1
   const isPhaseActive = (p: Phase) => currentPhase === p
-  const isPhaseDone = (p: Phase) => phaseIndex > phaseOrder.indexOf(p)
+  const isPhaseDone   = (p: Phase) => phaseIndex > phaseOrder.indexOf(p)
 
-  const currentFund = traders.find(t => t.id === traderId)
+  const isRunning = tickStatus === "running"
 
   // ─────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col gap-4 h-full">
-      {/* ── Header Controls ───────────────────────────────────── */}
-      <div className="flex flex-wrap items-start gap-3">
-        {/* Fund selector */}
+    <div className="flex flex-col gap-4 h-full min-h-0">
+
+      {/* ── Header Controls ─────────────────────────────────── */}
+      <div className="flex flex-wrap items-end gap-3 shrink-0">
+
+        {/* Fund */}
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Fund</label>
           <div className="relative">
             <select
               value={traderId}
               onChange={e => setTraderId(Number(e.target.value))}
-              disabled={tickStatus === "running"}
+              disabled={isRunning}
               className="h-9 pl-3 pr-8 text-sm bg-card border border-border rounded-md text-foreground focus:outline-none focus:border-primary disabled:opacity-50 cursor-pointer appearance-none"
             >
               {traders.length > 0
-                ? traders.map(t => (
-                    <option key={t.id} value={t.id}>
-                      {t.name} (${(t.total_capital / 1000).toFixed(1)}K)
-                    </option>
-                  ))
+                ? traders.map(t => <option key={t.id} value={t.id}>{t.name} (${(t.total_capital / 1000).toFixed(1)}K)</option>)
                 : <option value={1}>Fund-1</option>
               }
             </select>
@@ -437,12 +522,10 @@ export function HedgeFundArena() {
             <select
               value={selectedCommanderModel}
               onChange={e => setSelectedCommanderModel(e.target.value)}
-              disabled={tickStatus === "running"}
+              disabled={isRunning}
               className="h-9 pl-3 pr-8 text-sm bg-card border border-border rounded-md text-foreground focus:outline-none focus:border-primary disabled:opacity-50 cursor-pointer appearance-none"
             >
-              {models.map(m => (
-                <option key={m.id} value={m.id}>{m.display_name} · {m.tier}</option>
-              ))}
+              {models.map(m => <option key={m.id} value={m.id}>{m.display_name} · {m.tier}</option>)}
             </select>
             <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
           </div>
@@ -455,45 +538,40 @@ export function HedgeFundArena() {
             <select
               value={selectedWorkerModel}
               onChange={e => setSelectedWorkerModel(e.target.value)}
-              disabled={tickStatus === "running"}
+              disabled={isRunning}
               className="h-9 pl-3 pr-8 text-sm bg-card border border-border rounded-md text-foreground focus:outline-none focus:border-primary disabled:opacity-50 cursor-pointer appearance-none"
             >
-              {models.map(m => (
-                <option key={m.id} value={m.id}>{m.display_name} · {m.tier}</option>
-              ))}
+              {models.map(m => <option key={m.id} value={m.id}>{m.display_name} · {m.tier}</option>)}
             </select>
             <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
           </div>
         </div>
 
-        {/* Dry run toggle */}
+        {/* Dry run */}
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Mode</label>
           <button
             onClick={() => setDryRun(d => !d)}
-            disabled={tickStatus === "running"}
+            disabled={isRunning}
             className={cn(
               "h-9 px-3 text-sm rounded-md border transition-colors",
-              dryRun
-                ? "border-amber-500/50 bg-amber-500/10 text-amber-300"
-                : "border-border bg-card text-muted-foreground hover:text-foreground"
+              dryRun ? "border-amber-500/50 bg-amber-500/10 text-amber-300" : "border-border bg-card text-muted-foreground hover:text-foreground",
             )}
           >
             {dryRun ? "Dry Run" : "Live"}
           </button>
         </div>
 
-        {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Cost ticker */}
+        {/* Live API cost — updates whenever an agent completes */}
         <div className="flex flex-col gap-1 items-end">
           <label className="text-[10px] text-muted-foreground uppercase tracking-wider">API Cost</label>
-          <CostTicker total={totalCost} ticking={tickStatus === "running"} />
+          <LiveCostBadge total={totalCost} live={isRunning} />
         </div>
 
         {/* Elapsed */}
-        {(tickStatus === "running" || tickStatus === "complete") && (
+        {(isRunning || tickStatus === "complete" || tickStatus === "cancelled") && (
           <div className="flex flex-col gap-1 items-end">
             <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Elapsed</label>
             <div className="flex items-center gap-1.5 h-9 px-3 rounded-lg border border-border/30 text-xs font-mono text-muted-foreground">
@@ -503,105 +581,128 @@ export function HedgeFundArena() {
           </div>
         )}
 
-        {/* Run button */}
-        <div className="flex flex-col gap-1 items-end">
+        {/* ── Action buttons ─── */}
+        <div className="flex flex-col gap-1">
           <label className="text-[10px] text-muted-foreground uppercase tracking-wider">&nbsp;</label>
-          <Button
-            onClick={handleRunTick}
-            disabled={tickStatus === "running"}
-            className={cn(
-              "h-9 gap-2 font-semibold transition-all",
-              tickStatus === "running"
-                ? "bg-primary/20 text-primary border border-primary/40"
-                : tickStatus === "complete"
-                ? "bg-emerald-600 hover:bg-emerald-500"
-                : "bg-primary hover:bg-primary/90"
+          <div className="flex gap-2">
+            {/* Pause / Cancel button — only shown while running */}
+            {isRunning && (
+              <Button
+                onClick={handleCancelTick}
+                variant="outline"
+                className="h-9 gap-2 border-red-500/40 text-red-400 hover:bg-red-500/10 hover:text-red-300"
+              >
+                <Square className="w-3.5 h-3.5" />
+                Stop
+              </Button>
             )}
-          >
-            {tickStatus === "running" ? (
-              <><Loader2 className="w-4 h-4 animate-spin" /> Running...</>
-            ) : tickStatus === "complete" ? (
-              <><RefreshCw className="w-4 h-4" /> Run Again</>
-            ) : (
-              <><Play className="w-4 h-4" /> Run Tick</>
-            )}
-          </Button>
+
+            {/* Run / Re-run button */}
+            <Button
+              onClick={handleRunTick}
+              disabled={isRunning}
+              className={cn(
+                "h-9 gap-2 font-semibold transition-all",
+                isRunning
+                  ? "bg-primary/20 text-primary border border-primary/40"
+                  : tickStatus === "complete"
+                  ? "bg-emerald-600 hover:bg-emerald-500"
+                  : tickStatus === "cancelled"
+                  ? "bg-amber-600 hover:bg-amber-500"
+                  : "bg-primary hover:bg-primary/90",
+              )}
+            >
+              {isRunning ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Running...</>
+              ) : tickStatus === "complete" ? (
+                <><RefreshCw className="w-4 h-4" /> Run Again</>
+              ) : tickStatus === "cancelled" ? (
+                <><Play className="w-4 h-4" /> Retry</>
+              ) : (
+                <><Play className="w-4 h-4" /> Run Tick</>
+              )}
+            </Button>
+          </div>
         </div>
       </div>
 
-      {/* ── Content Grid ──────────────────────────────────────── */}
-      <div className="flex gap-4 flex-1 min-h-0">
+      {/* ── Main Layout ──────────────────────────────────────── */}
+      <div className="flex gap-4 flex-1 min-h-0 overflow-hidden">
 
-        {/* ── Left: Agent Pipeline DAG ────────────────────────── */}
-        <div className="flex flex-col gap-3 w-72 shrink-0">
-          <div className="flex items-center gap-2">
+        {/* ── Left: Agent Pipeline DAG (scrollable) ─────────── */}
+        <div className="w-64 shrink-0 flex flex-col gap-2 min-h-0">
+          <div className="flex items-center gap-2 shrink-0">
             <Cpu className="w-4 h-4 text-primary" />
             <span className="text-sm font-semibold">Agent Pipeline</span>
           </div>
 
-          {/* Phase 0: Data */}
-          <PhaseLabel label="Phase 0 · Data Fetch" active={isPhaseActive("data_fetch")} done={isPhaseDone("data_fetch")} />
+          <ScrollArea className="flex-1 pr-2">
+            <div className="flex flex-col gap-2 pb-4">
+              {/* P0: Data Fetch */}
+              <PhaseLabel label="Phase 0 · Data Fetch" active={isPhaseActive("data_fetch")} done={isPhaseDone("data_fetch")} />
 
-          {/* Phase 1: Consultants */}
-          <PhaseLabel label="Phase 1 · C-Suite" active={isPhaseActive("consultants")} done={isPhaseDone("consultants")} />
-          <div className="grid grid-cols-1 gap-1.5 pl-3 border-l-2 border-border/30 ml-2">
-            {agents.filter(a => ["consultant","auditor","scout"].includes(a.id)).map(a => (
-              <AgentPill key={a.id} agent={a} />
-            ))}
-          </div>
-
-          {/* Flow arrow */}
-          <div className="flex items-center gap-1.5 pl-4">
-            <ArrowRight className="w-3.5 h-3.5 text-muted-foreground/40" />
-            <div className="h-px flex-1 bg-border/30" />
-          </div>
-
-          {/* Phase 2: Commander */}
-          <PhaseLabel label="Phase 2 · Commander" active={isPhaseActive("commander")} done={isPhaseDone("commander")} />
-          <div className="pl-3 border-l-2 border-rose-500/20 ml-2">
-            <AgentPill key="commander" agent={agents.find(a => a.id === "commander")!} />
-          </div>
-
-          {/* Flow arrow */}
-          <div className="flex items-center gap-1.5 pl-4">
-            <ArrowRight className="w-3.5 h-3.5 text-muted-foreground/40" />
-            <div className="h-px flex-1 bg-border/30" />
-          </div>
-
-          {/* Phase 3: Desks */}
-          <PhaseLabel label="Phase 3 · Trading Desks" active={isPhaseActive("desks")} done={isPhaseDone("desks")} />
-          {[1,2,3].map(desk => (
-            <div key={desk} className="rounded-lg border border-border/30 bg-card/20 overflow-hidden">
-              <div className="px-2 py-1 bg-muted/10 border-b border-border/20 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
-                Desk {desk}
-              </div>
-              <div className="flex flex-col gap-1 p-1.5">
-                {agents.filter(a => a.desk === desk).map(a => (
+              {/* P1: Consultants */}
+              <PhaseLabel label="Phase 1 · C-Suite" active={isPhaseActive("consultants")} done={isPhaseDone("consultants")} />
+              <div className="flex flex-col gap-1 pl-3 border-l-2 border-border/30 ml-2">
+                {agents.filter(a => ["consultant","auditor","scout"].includes(a.id)).map(a => (
                   <AgentPill key={a.id} agent={a} />
                 ))}
               </div>
+
+              <div className="flex items-center gap-1 pl-4 opacity-40">
+                <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                <div className="h-px flex-1 bg-border/30" />
+              </div>
+
+              {/* P2: Commander */}
+              <PhaseLabel label="Phase 2 · Commander" active={isPhaseActive("commander")} done={isPhaseDone("commander")} />
+              <div className="pl-3 border-l-2 border-rose-500/20 ml-2">
+                <AgentPill agent={agents.find(a => a.id === "commander")!} />
+              </div>
+
+              <div className="flex items-center gap-1 pl-4 opacity-40">
+                <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                <div className="h-px flex-1 bg-border/30" />
+              </div>
+
+              {/* P3: 3 Desks — each has its own scroll area if needed */}
+              <PhaseLabel label="Phase 3 · Trading Desks" active={isPhaseActive("desks")} done={isPhaseDone("desks")} />
+              {[1, 2, 3].map(desk => (
+                <div key={desk} className="rounded-lg border border-border/30 bg-card/20 overflow-hidden">
+                  <div className="px-2 py-1 bg-muted/10 border-b border-border/20 text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    <span>Desk {desk}</span>
+                    {agents.filter(a => a.desk === desk).every(a => a.status === "complete") && isPhaseDone("desks") && (
+                      <CheckCircle2 className="w-3 h-3 text-emerald-400 ml-auto" />
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-1 p-1.5">
+                    {agents.filter(a => a.desk === desk).map(a => (
+                      <AgentPill key={a.id} agent={a} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+
+              <div className="flex items-center gap-1 pl-4 opacity-40">
+                <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                <div className="h-px flex-1 bg-border/30" />
+              </div>
+
+              {/* P4: Back Office */}
+              <PhaseLabel label="Phase 4 · Back Office" active={isPhaseActive("back_office")} done={isPhaseDone("back_office")} />
+              <div className="pl-3 border-l-2 border-orange-500/20 ml-2">
+                <AgentPill agent={agents.find(a => a.id === "back_office")!} />
+              </div>
             </div>
-          ))}
-
-          {/* Flow arrow */}
-          <div className="flex items-center gap-1.5 pl-4">
-            <ArrowRight className="w-3.5 h-3.5 text-muted-foreground/40" />
-            <div className="h-px flex-1 bg-border/30" />
-          </div>
-
-          {/* Phase 4: Back Office */}
-          <PhaseLabel label="Phase 4 · Back Office" active={isPhaseActive("back_office")} done={isPhaseDone("back_office")} />
-          <div className="pl-3 border-l-2 border-orange-500/20 ml-2">
-            <AgentPill key="back_office" agent={agents.find(a => a.id === "back_office")!} />
-          </div>
+          </ScrollArea>
         </div>
 
-        {/* ── Right: Results + Logs ────────────────────────────── */}
-        <div className="flex flex-col flex-1 gap-3 min-w-0">
+        {/* ── Right: Results + Log ─────────────────────────── */}
+        <div className="flex flex-col flex-1 gap-3 min-h-0 min-w-0">
 
-          {/* Idle state */}
+          {/* Idle splash */}
           {tickStatus === "idle" && (
-            <div className="flex-1 flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border/40 bg-card/20">
+            <div className="shrink-0 flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border/40 bg-card/20 py-12">
               <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
                 <Bot className="w-8 h-8 text-primary/60" />
               </div>
@@ -609,37 +710,54 @@ export function HedgeFundArena() {
                 <h3 className="text-base font-semibold text-foreground mb-1">Hedge Fund Swarm Ready</h3>
                 <p className="text-sm text-muted-foreground max-w-xs">
                   Select a fund and models, then click <strong>Run Tick</strong> to dispatch
-                  <br />13 AI agents across the Commander → Desk pipeline.
+                  14 AI agents through the Commander → Desk pipeline.
                 </p>
               </div>
-              <div className="flex gap-4 text-xs text-muted-foreground">
-                <div className="flex items-center gap-1.5"><Brain className="w-3.5 h-3.5 text-rose-400" />Commander (CEO)</div>
-                <div className="flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-violet-400" />3× Strategist</div>
+              <div className="flex gap-5 text-xs text-muted-foreground">
+                <div className="flex items-center gap-1.5"><Brain className="w-3.5 h-3.5 text-rose-400" />Commander</div>
+                <div className="flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-violet-400" />3× Desks</div>
                 <div className="flex items-center gap-1.5"><Shield className="w-3.5 h-3.5 text-orange-400" />Risk Bouncer</div>
               </div>
             </div>
           )}
 
-          {/* Result cards — shown when complete */}
+          {/* Cancelled banner */}
+          {tickStatus === "cancelled" && (
+            <div className="shrink-0 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 flex items-center gap-3">
+              <XCircle className="w-4 h-4 text-amber-400 shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-amber-300">Tick Cancelled</p>
+                <p className="text-xs text-muted-foreground">Agents stopped. API costs already incurred have been deducted.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Error banner */}
+          {tickStatus === "error" && (
+            <div className="shrink-0 rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 flex items-center gap-3">
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-red-300">Tick Failed</p>
+                <p className="text-xs text-muted-foreground">Check logs. Common causes: missing ANTHROPIC_API_KEY, data not ingested, or API rate limit.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Result summary cards */}
           {tickStatus === "complete" && tickResult && (
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              {/* Macro regime */}
+            <div className="shrink-0 grid grid-cols-2 lg:grid-cols-4 gap-3">
               {tickResult.macro_brief && (
                 <div className="rounded-lg border border-border/40 bg-card/30 p-3 flex flex-col gap-1">
                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Macro Regime</span>
-                  <span className={cn(
-                    "text-sm font-semibold",
-                    tickResult.macro_brief.macro_regime === "Risk-On" ? "text-emerald-400" :
+                  <span className={cn("text-sm font-semibold",
+                    tickResult.macro_brief.macro_regime === "Risk-On"  ? "text-emerald-400" :
                     tickResult.macro_brief.macro_regime === "Risk-Off" ? "text-red-400" : "text-amber-400"
-                  )}>
-                    {tickResult.macro_brief.macro_regime}
-                  </span>
+                  )}>{tickResult.macro_brief.macro_regime}</span>
                   <span className="text-[10px] text-muted-foreground">
                     VIX {tickResult.macro_brief.vix_level?.toFixed(1)} · TNX {tickResult.macro_brief.ten_year_yield?.toFixed(2)}%
                   </span>
                 </div>
               )}
-              {/* Deployment */}
               {tickResult.commander_directive && (
                 <div className="rounded-lg border border-border/40 bg-card/30 p-3 flex flex-col gap-1">
                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Deployed</span>
@@ -651,40 +769,32 @@ export function HedgeFundArena() {
                   </span>
                 </div>
               )}
-              {/* Cost */}
               <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex flex-col gap-1">
-                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">API Cost</span>
-                <span className="text-sm font-semibold text-amber-400 font-mono">
-                  ${tickResult.api_cost_deducted_usd.toFixed(5)}
-                </span>
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Total API Cost</span>
+                <span className="text-sm font-semibold text-amber-400 font-mono">${tickResult.api_cost_deducted_usd.toFixed(5)}</span>
                 <span className="text-[10px] text-muted-foreground">
-                  {(tickResult.total_token_cost?.input_tokens || 0) + (tickResult.total_token_cost?.output_tokens || 0)} tokens
+                  {((tickResult.total_token_cost?.input_tokens || 0) + (tickResult.total_token_cost?.output_tokens || 0)).toLocaleString()} tokens
                 </span>
               </div>
-              {/* Elapsed */}
               <div className="rounded-lg border border-border/40 bg-card/30 p-3 flex flex-col gap-1">
                 <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Elapsed</span>
                 <span className="text-sm font-semibold text-foreground">{tickResult.elapsed_seconds.toFixed(1)}s</span>
-                <span className="text-[10px] text-muted-foreground">across 13 agents</span>
+                <span className="text-[10px] text-muted-foreground">14 agents</span>
               </div>
             </div>
           )}
 
-          {/* Desk strategies — shown when complete */}
-          {tickStatus === "complete" && tickResult?.desk_results?.length && (
-            <div className="grid grid-cols-3 gap-3">
-              {tickResult.desk_results.map(desk => (
-                <div key={desk.desk_id} className="rounded-lg border border-violet-500/20 bg-violet-500/5 p-3 flex flex-col gap-1">
+          {/* Desk strategy results */}
+          {tickStatus === "complete" && (tickResult?.desk_results?.length ?? 0) > 0 && (
+            <div className="shrink-0 grid grid-cols-3 gap-3">
+              {tickResult!.desk_results.map(desk => (
+                <div key={desk.desk_id} className="rounded-lg border border-violet-500/20 bg-violet-500/5 p-3 flex flex-col gap-1.5">
                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Desk {desk.desk_id}</span>
                   <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="text-[10px] border-violet-500/40 text-violet-300">
-                      {desk.strategy_id}
-                    </Badge>
+                    <Badge variant="outline" className="text-[10px] border-violet-500/40 text-violet-300">{desk.strategy_id}</Badge>
                     <CheckCircle2 className="w-3 h-3 text-emerald-400" />
                   </div>
-                  <span className="text-[10px] text-muted-foreground font-mono">
-                    ${desk.allocated_capital.toLocaleString()}
-                  </span>
+                  <span className="text-[11px] text-muted-foreground font-mono">${desk.allocated_capital.toLocaleString()}</span>
                 </div>
               ))}
             </div>
@@ -692,66 +802,59 @@ export function HedgeFundArena() {
 
           {/* Commander reasoning */}
           {tickStatus === "complete" && tickResult?.commander_directive?.commander_reasoning && (
-            <div className="rounded-lg border border-rose-500/20 bg-rose-500/5 p-3">
+            <div className="shrink-0 rounded-lg border border-rose-500/20 bg-rose-500/5 p-3">
               <div className="flex items-center gap-2 mb-1.5">
                 <Brain className="w-3.5 h-3.5 text-rose-400" />
                 <span className="text-xs font-semibold text-rose-300">Commander Reasoning</span>
               </div>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                {tickResult.commander_directive.commander_reasoning}
-              </p>
+              <p className="text-xs text-muted-foreground leading-relaxed">{tickResult.commander_directive.commander_reasoning}</p>
             </div>
           )}
 
-          {/* Error state */}
-          {tickStatus === "error" && (
-            <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-4 flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-red-300">Tick Failed</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Check the logs below. Common causes: missing ANTHROPIC_API_KEY, data pipeline not run, or network error.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Live Log Stream */}
-          <div className="flex-1 min-h-0 flex flex-col rounded-lg border border-border/40 bg-[#0a0a0f] overflow-hidden">
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-border/30 bg-card/20">
+          {/* ── Log Terminal (scrollable, grows to fill remaining space) ── */}
+          <div className="flex-1 min-h-0 flex flex-col rounded-lg border border-border/40 bg-[#080810] overflow-hidden">
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-border/25 bg-card/10 shrink-0">
               <TerminalIcon className="w-3.5 h-3.5 text-muted-foreground" />
               <span className="text-xs font-semibold text-muted-foreground">Swarm Log</span>
-              {tickStatus === "running" && (
-                <div className="flex items-center gap-1 ml-auto">
+              {isRunning && (
+                <div className="flex items-center gap-1.5 ml-2">
                   <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span className="text-[10px] text-emerald-400">live</span>
+                  <span className="text-[10px] text-emerald-400">streaming</span>
                 </div>
               )}
-              {logs.length > 0 && (
-                <span className="text-[10px] text-muted-foreground ml-auto">{logs.length} lines</span>
-              )}
+              <span className="ml-auto text-[10px] text-muted-foreground/50">{logs.length} lines</span>
             </div>
-            <ScrollArea className="flex-1">
-              <div className="p-3 font-mono text-[11px] space-y-0.5">
-                {logs.length === 0 && tickStatus === "idle" && (
-                  <span className="text-muted-foreground/40">Logs will appear here when tick starts...</span>
+
+            {/* The key: ScrollArea fills remaining height so logs stay contained */}
+            <ScrollArea className="flex-1 min-h-0">
+              <div className="p-3 font-mono text-[11px] space-y-px">
+                {logs.length === 0 && !isRunning && (
+                  <span className="text-muted-foreground/30 select-none">
+                    Logs will appear here when a tick starts...
+                  </span>
                 )}
-                {logs.length === 0 && tickStatus === "running" && (
-                  <span className="text-muted-foreground/60 animate-pulse">Waiting for agents to initialize...</span>
+                {logs.length === 0 && isRunning && (
+                  <span className="text-muted-foreground/50 animate-pulse select-none">
+                    Initializing agents...
+                  </span>
                 )}
                 {logs.map((log, i) => (
                   <div key={i} className="flex gap-2 leading-5">
-                    <span className="text-muted-foreground/40 shrink-0">{log.ts}</span>
+                    <span className="text-muted-foreground/30 shrink-0 select-none">{log.ts}</span>
                     <span className={cn(
-                      "shrink-0 w-14",
-                      log.level === "ERROR" ? "text-red-400" :
-                      log.level === "WARNING" ? "text-amber-400" : "text-emerald-400/70"
-                    )}>[{log.agent?.slice(0, 8)}]</span>
+                      "shrink-0 w-[72px] truncate",
+                      log.level === "ERROR"   ? "text-red-400/80" :
+                      log.level === "WARNING" ? "text-amber-400/80" : "text-cyan-600/70"
+                    )}>
+                      [{(log.agent || "sys").slice(0, 8)}]
+                    </span>
                     <span className={cn(
                       "break-all",
-                      log.level === "ERROR" ? "text-red-300" :
-                      log.level === "WARNING" ? "text-amber-300" : "text-foreground/80"
-                    )}>{log.msg}</span>
+                      log.level === "ERROR"   ? "text-red-300" :
+                      log.level === "WARNING" ? "text-amber-300" : "text-foreground/75"
+                    )}>
+                      {log.msg}
+                    </span>
                   </div>
                 ))}
                 <div ref={logsEndRef} />

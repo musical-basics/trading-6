@@ -47,7 +47,8 @@ class TickRequest(BaseModel):
 
 class TickStatusResponse(BaseModel):
     """GET /api/arena/tick/{tick_id}/status response."""
-    status: Literal["running", "complete", "error"]
+    status: Literal["running", "complete", "error", "cancelled"]
+
     phase: str | None = None
     current_agent: str | None = None
     elapsed_seconds: float = 0.0
@@ -100,6 +101,7 @@ async def trigger_tick(trader_id: int, req: TickRequest | None = None):
         "result": None,
         "error": None,
         "progress": None,
+        "task": None,  # will be set after create_task
     }
 
     # Get trader name for logging
@@ -114,7 +116,8 @@ async def trigger_tick(trader_id: int, req: TickRequest | None = None):
 
     _log("INFO", "orchestrator", f"🚀 Tick started for {fund_name} (trader_id={trader_id}, dry_run={req.dry_run})")
 
-    asyncio.create_task(_execute_tick(tick_id, trader_id, req))
+    task = asyncio.create_task(_execute_tick(tick_id, trader_id, req))
+    _active_ticks[tick_id]["task"] = task
 
     return {
         "status": "started",
@@ -123,6 +126,28 @@ async def trigger_tick(trader_id: int, req: TickRequest | None = None):
         "message": f"Daily tick started for fund '{fund_name}'",
         "dry_run": req.dry_run,
     }
+
+
+@router.delete("/tick/{tick_id}")
+async def cancel_tick(tick_id: str):
+    """Cancel a running tick immediately.
+    
+    Cancels the asyncio Task and marks it as cancelled in the state dict.
+    Token costs already incurred are still deducted from P/L.
+    """
+    tick = _active_ticks.get(tick_id)
+    if tick is None:
+        return {"ok": False, "error": "Tick ID not found"}
+    if tick["status"] != "running":
+        return {"ok": False, "error": f"Tick is not running (status: {tick['status']})"}
+
+    task: asyncio.Task | None = tick.get("task")
+    if task and not task.done():
+        task.cancel()
+
+    _active_ticks[tick_id]["status"] = "cancelled"
+    _log("WARNING", "orchestrator", f"⏹️ Tick {tick_id[:8]} cancelled by user")
+    return {"ok": True, "tick_id": tick_id, "status": "cancelled"}
 
 
 async def _execute_tick(tick_id: str, trader_id: int, req: TickRequest):
