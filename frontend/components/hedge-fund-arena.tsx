@@ -402,14 +402,21 @@ export function HedgeFundArena() {
           if (data.result) {
             const result = data.result as TickResult
             setTickResult(result)
-            const finalCost = result.api_cost_deducted_usd || result.total_token_cost?.estimated_cost_usd || 0
+            // Use actual token cost (not deducted amount which is 0 for dry runs)
+            const finalCost = result.total_token_cost?.estimated_cost_usd
+              || result.api_cost_deducted_usd
+              || 0
             setCurrentTickCost(finalCost)
             setElapsedSec(result.elapsed_seconds)
             setAgents(prev => prev.map(a =>
               a.status !== "error" ? { ...a, status: "complete" as AgentStatus } : a
             ))
-            // Refresh all-time cost from ledger after tick settles
-            setTimeout(() => fetchAllTimeCost(traderId), 1500)
+            // Refresh all-time ledger then clear currentTickCost to avoid double-count
+            setTimeout(async () => {
+              await fetchAllTimeCost(traderId)
+              // Only clear if the ledger actually captured this tick (non-dry-run)
+              if (!dryRun) setCurrentTickCost(0)
+            }, 1500)
           }
         } else if (data.status === "error") {
           stopAllPolling()
@@ -615,10 +622,12 @@ export function HedgeFundArena() {
         <div className="flex flex-col gap-1 items-end">
           <label className="text-[10px] text-muted-foreground uppercase tracking-wider">API Cost</label>
           <div className="flex flex-col items-end gap-0.5">
-            {/* Main badge: all-time total from Parquet ledger — persists across refreshes */}
-            <LiveCostBadge total={allTimeCost + (isRunning ? currentTickCost : 0)} live={isRunning} />
-            {/* Sub-line: this tick only, shown live and after completion */}
-            {(isRunning || tickStatus === "complete") && currentTickCost > 0 && (
+            {/* allTimeCost = backend ledger (persists across refreshes)
+                currentTickCost = always added so dry-run costs show correctly
+                After non-dry-run tick completes + ledger refreshes, currentTickCost resets to 0 */}
+            <LiveCostBadge total={allTimeCost + currentTickCost} live={isRunning} />
+            {/* Sub-line: this tick breakdown, shown while running or just after */}
+            {currentTickCost > 0 && (
               <span className="text-[10px] text-muted-foreground/60 font-mono tabular-nums">
                 this tick ${currentTickCost.toFixed(5)}
               </span>
@@ -686,13 +695,14 @@ export function HedgeFundArena() {
       <div className="flex gap-4 flex-1 min-h-0 overflow-hidden">
 
         {/* ── Left: Agent Pipeline DAG (scrollable) ─────────── */}
-        <div className="w-64 shrink-0 flex flex-col gap-2 min-h-0">
+        <div className="w-64 shrink-0 flex flex-col gap-2 overflow-hidden">
           <div className="flex items-center gap-2 shrink-0">
             <Cpu className="w-4 h-4 text-primary" />
             <span className="text-sm font-semibold">Agent Pipeline</span>
           </div>
 
-          <ScrollArea className="flex-1 pr-2">
+          {/* overflow-y-auto on a bounded div works more reliably than ScrollArea in flex chains */}
+          <div className="flex-1 overflow-y-auto pr-1 scrollbar-thin">
             <div className="flex flex-col gap-2 pb-4">
               {/* P0: Data Fetch */}
               <PhaseLabel label="Phase 0 · Data Fetch" active={isPhaseActive("data_fetch")} done={isPhaseDone("data_fetch")} />
@@ -750,7 +760,7 @@ export function HedgeFundArena() {
                 <AgentPill agent={agents.find(a => a.id === "back_office")!} />
               </div>
             </div>
-          </ScrollArea>
+          </div>
         </div>
 
         {/* ── Right: Results + Log ─────────────────────────── */}
@@ -867,7 +877,7 @@ export function HedgeFundArena() {
             </div>
           )}
 
-          {/* ── Log Terminal (scrollable, grows to fill remaining space) ── */}
+          {/* ── Log Terminal — native overflow-y-auto so flex-1 actually works ── */}
           <div className="flex-1 min-h-0 flex flex-col rounded-lg border border-border/40 bg-[#080810] overflow-hidden">
             <div className="flex items-center gap-2 px-3 py-2 border-b border-border/25 bg-card/10 shrink-0">
               <TerminalIcon className="w-3.5 h-3.5 text-muted-foreground" />
@@ -881,22 +891,22 @@ export function HedgeFundArena() {
               <span className="ml-auto text-[10px] text-muted-foreground/50">{logs.length} lines</span>
             </div>
 
-            {/* The key: ScrollArea fills remaining height so logs stay contained */}
-            <ScrollArea className="flex-1 min-h-0">
+            {/* overflow-y-auto on the inner div — more reliable than ScrollArea in flex chains */}
+            <div className="flex-1 overflow-y-auto min-h-0">
               <div className="p-3 font-mono text-[11px] space-y-px">
-                {logs.length === 0 && !isRunning && (
+                {logs.length === 0 && tickStatus !== "running" && (
                   <span className="text-muted-foreground/30 select-none">
                     Logs will appear here when a tick starts...
                   </span>
                 )}
-                {logs.length === 0 && isRunning && (
+                {logs.length === 0 && tickStatus === "running" && (
                   <span className="text-muted-foreground/50 animate-pulse select-none">
                     Initializing agents...
                   </span>
                 )}
                 {logs.map((log, i) => (
                   <div key={i} className="flex gap-2 leading-5">
-                    <span className="text-muted-foreground/30 shrink-0 select-none">{log.ts}</span>
+                    <span className="text-muted-foreground/30 shrink-0 select-none w-14">{log.ts}</span>
                     <span className={cn(
                       "shrink-0 w-[72px] truncate",
                       log.level === "ERROR"   ? "text-red-400/80" :
@@ -905,7 +915,7 @@ export function HedgeFundArena() {
                       [{(log.agent || "sys").slice(0, 8)}]
                     </span>
                     <span className={cn(
-                      "break-all",
+                      "break-all flex-1",
                       log.level === "ERROR"   ? "text-red-300" :
                       log.level === "WARNING" ? "text-amber-300" : "text-foreground/75"
                     )}>
@@ -915,7 +925,7 @@ export function HedgeFundArena() {
                 ))}
                 <div ref={logsEndRef} />
               </div>
-            </ScrollArea>
+            </div>
           </div>
         </div>
       </div>
