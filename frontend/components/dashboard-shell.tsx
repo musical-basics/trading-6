@@ -20,6 +20,7 @@ import {
   BookOpen,
   Briefcase,
   Sigma,
+  Bot,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -40,8 +41,9 @@ import { ForensicAuditor } from "./forensic-auditor"
 import { LivePositions } from "./live-positions"
 import { DataLibrary } from "./data-library"
 import { MetricsLibrary } from "./metrics-library"
+import { HedgeFundArena } from "./hedge-fund-arena"
 
-type View = "data-pipeline" | "data-library" | "metrics-library" | "aligned-pipeline" | "indicators-analysis" | "alpha-lab" | "forensic-auditor" | "strategy-studio" | "xray-inspector" | "risk-war-room" | "execution-ledger" | "trader-manager" | "live-positions"
+type View = "data-pipeline" | "data-library" | "metrics-library" | "aligned-pipeline" | "indicators-analysis" | "alpha-lab" | "forensic-auditor" | "strategy-studio" | "xray-inspector" | "risk-war-room" | "execution-ledger" | "trader-manager" | "live-positions" | "hedge-fund-arena"
 
 const navItems = [
   {
@@ -134,6 +136,13 @@ const navItems = [
     icon: Briefcase,
     description: "Real-time PnL & Holdings",
     badge: null
+  },
+  {
+    id: "hedge-fund-arena" as const,
+    label: "Hedge Fund Arena",
+    icon: Bot,
+    description: "AI Swarm Orchestration",
+    badge: "Swarm"
   },
 ]
 
@@ -311,6 +320,7 @@ export function DashboardShell() {
           {currentView === "execution-ledger" && <ExecutionLedger />}
           {currentView === "trader-manager" && <TraderManager />}
           {currentView === "live-positions" && <LivePositions />}
+          {currentView === "hedge-fund-arena" && <HedgeFundArena />}
         </main>
 
         {/* Status Bar */}
