@@ -117,6 +117,9 @@ app.include_router(alpha_lab.router)
 from src.api.routers import pipeline
 app.include_router(pipeline.router)
 
+from src.api.routers import arena
+app.include_router(arena.router)
+
 
 # ── WebSocket Endpoint — Real-Time Telemetry ────────────────
 @app.websocket("/api/ws/telemetry")
