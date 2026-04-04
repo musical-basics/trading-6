@@ -269,7 +269,9 @@ export function HedgeFundArena() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [logOffset, setLogOffset] = useState(0)
   const [tickResult, setTickResult] = useState<TickResult | null>(null)
-  const [totalCost, setTotalCost] = useState(0)
+  // currentTickCost resets each run; cumulativeCost accumulates across all ticks this session
+  const [currentTickCost, setCurrentTickCost] = useState(0)
+  const [cumulativeCost, setCumulativeCost] = useState(0)
   const [elapsedSec, setElapsedSec] = useState(0)
 
   const pollRef    = useRef<NodeJS.Timeout | null>(null)
@@ -352,8 +354,8 @@ export function HedgeFundArena() {
             strategy: data.strategy as string | undefined,
           } : a
         ))
-        // ← THE FIX: accumulate cost here from log events
-        if (cost) setTotalCost(prev => prev + cost)
+        // Live cost accumulation per-agent from log-parsed events
+        if (cost) setCurrentTickCost(prev => prev + cost)
       } else if (type === "arena.phase_completed") {
         const phaseName = (data.phase_name || data.phase) as string
         if (phaseName) setCurrentPhase(phaseName as Phase)
@@ -379,8 +381,10 @@ export function HedgeFundArena() {
           if (data.result) {
             const result = data.result as TickResult
             setTickResult(result)
-            // Use final server cost as source of truth (overrides running total)
-            setTotalCost(result.api_cost_deducted_usd || result.total_token_cost?.estimated_cost_usd || 0)
+            const finalCost = result.api_cost_deducted_usd || result.total_token_cost?.estimated_cost_usd || 0
+            setCurrentTickCost(finalCost)
+            // Accumulate into session total (never resets)
+            setCumulativeCost(prev => prev + finalCost)
             setElapsedSec(result.elapsed_seconds)
             setAgents(prev => prev.map(a =>
               a.status !== "error" ? { ...a, status: "complete" as AgentStatus } : a
@@ -409,7 +413,7 @@ export function HedgeFundArena() {
           setLogs(prev => [...prev, ...newEntries])
           logOffsetRef.current += newEntries.length
           setLogOffset(logOffsetRef.current)
-          // Drive live UI updates from parsed log events
+          // processNewLogs parses cost_usd out of agent_completed events → live cost ticker
           processNewLogs(newEntries)
         }
       } catch { /* retry next interval */ }
@@ -433,10 +437,10 @@ export function HedgeFundArena() {
   const handleRunTick = async () => {
     if (tickStatus === "running") return
 
-    // Reset
+    // Reset per-tick state (cumulativeCost intentionally NOT reset)
     setTickStatus("running")
     setTickResult(null)
-    setTotalCost(0)
+    setCurrentTickCost(0)  // resets for this tick only
     setElapsedSec(0)
     setLogs([])
     setLogOffset(0)
@@ -547,7 +551,7 @@ export function HedgeFundArena() {
           </div>
         </div>
 
-        {/* Dry run */}
+        {/* Mode: Live / Dry Run */}
         <div className="flex flex-col gap-1">
           <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Mode</label>
           <button
@@ -562,12 +566,41 @@ export function HedgeFundArena() {
           </button>
         </div>
 
+        {/* Test Mode preset — one click: Haiku + Dry Run */}
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Preset</label>
+          <button
+            onClick={() => {
+              const haiku = models.find(m => m.tier.includes("Haiku"))
+              if (haiku) {
+                setSelectedCommanderModel(haiku.id)
+                setSelectedWorkerModel(haiku.id)
+              }
+              setDryRun(true)
+            }}
+            disabled={isRunning}
+            className={cn(
+              "h-9 px-3 text-sm rounded-md border transition-colors flex items-center gap-1.5",
+              "border-violet-500/40 bg-violet-500/8 text-violet-300 hover:bg-violet-500/15 disabled:opacity-50",
+            )}
+          >
+            <span className="text-[11px]">⚡</span> Test Mode
+          </button>
+        </div>
+
         <div className="flex-1" />
 
-        {/* Live API cost — updates whenever an agent completes */}
+        {/* API Cost — this tick + persistent session total */}
         <div className="flex flex-col gap-1 items-end">
           <label className="text-[10px] text-muted-foreground uppercase tracking-wider">API Cost</label>
-          <LiveCostBadge total={totalCost} live={isRunning} />
+          <div className="flex flex-col items-end gap-0.5">
+            <LiveCostBadge total={currentTickCost} live={isRunning} />
+            {cumulativeCost > 0 && (
+              <span className="text-[10px] text-muted-foreground/60 font-mono tabular-nums">
+                session ${cumulativeCost.toFixed(5)}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Elapsed */}
